@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+- when fixing tests (i.e. getting them to pass) the purpose should be to ensure that the code being tested is first of all correct and to spec, followed by ensuring that the test tests the code properly and thoroughly. Don't hack the code being tested just to get the test passing; only make such changes to the code being tested if it's to fix a bug in it.

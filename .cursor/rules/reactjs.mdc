@@ -1,0 +1,14 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+When building with React.js the following guidelines apply:
+
+* Always use Typescript for building React apps.
+* Use useCallback() and useMemo() wherever possible to maximize efficiency via memoization.
+* When writing a React component the filename should match the component name and end in `.tsx`. The file should not use a default export but instead should instead the component as it is named.
+* When passing the same data down through several levels of components it may be wiser to use a React context instead to achieve the same * ask me if this should be done.
+* A component's input props are specified as a Typescript interface and always exported in its own right from the component file.
+* For React contexts they should be placed in the their own file and must always additional export a hook named in the format use...Context * this internally should wrap useContext() so that the context can easily be used in components via a hook.
+* For components which take a className string property always use the PropsWithClassname type to define the input types. If this type doesn't exist then ask me where to define it or find it.

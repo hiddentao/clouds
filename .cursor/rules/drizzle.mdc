@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Drizzle ORM Rules
+
+## Migrations
+
+- Never create migrations manually. Always use Drizzle Kit to generate them.
+- Use `bun drizzle-kit generate` to create migrations based on schema changes.
+- Use `bun drizzle-kit push` to apply migrations to the database.
+- Use `bun drizzle-kit drop` to drop tables (with caution).
+
+## Schema Management
+
+- Use Drizzle's type inference system for type safety.
+- Use explicit column types and constraints.
+- Always add appropriate indexes for query optimization.
+
+## Migration Naming Conventions
+
+- Migration names should be descriptive of the changes being made.
+- Use prefixes for different types of migrations:
+  - `add_` for adding new tables or columns
+  - `remove_` for removing tables or columns
+  - `alter_` for modifying existing tables or columns
+  - `rename_` for renaming tables or columns
+
+## Version Control
+
+- Never modify generated migration files after they've been created.
+- If a migration needs to be changed, create a new one instead.

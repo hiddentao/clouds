@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+- do not add the shebang lines at the top of husky scripts as this has been deprecated - the husky scripts should only contain the commands that need to be executed, nothing else

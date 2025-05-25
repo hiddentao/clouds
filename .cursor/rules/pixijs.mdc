@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+When building with PIXI.js the following guidelines apply:
+
+* Check pixi version in package.json to know which API version to build with. Look up the docs for this version to know which methods to use. 
+* NEVER use deprecated drawing methods. Always looks up the API docs for the installed PIXI.js version to know how to do things properly.
+* Always use the PIXI shared ticker instead of requestAnimationFrame.

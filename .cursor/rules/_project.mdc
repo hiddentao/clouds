@@ -1,0 +1,26 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- include rules from [typescript.mdc](mdc:.cursor/rules/typescript.mdc), [biome.json](mdc:biome.json), [bun.mdc](mdc:.cursor/rules/bun.mdc), [husky.mdc](mdc:.cursor/rules/husky.mdc), [pixijs.mdc](mdc:.cursor/rules/pixijs.mdc)
+
+## Cloud rendering
+
+To render pixelated clouds like the image using Pixi.js in real-time without causing out-of-memory (OOM) issues, use a **Perlin noise-based algorithm** with a shader. Here's the core approach:
+
+1. **Perlin Noise for Cloud Shape**: Generate 2D Perlin noise to create organic, fluffy cloud patterns. It's lightweight and ideal for real-time rendering.
+2. **Fragment Shader in Pixi.js**: Use a custom fragment shader to process the noise and apply pixelation. This offloads work to the GPU, avoiding OOM issues.
+3. **Pixelation Effect**: Quantize the noise values in the shader to create a pixelated look by rounding to discrete levels.
+4. **Optimization**: Use a single full-screen sprite with the shader applied, and animate the noise offset over time for a dynamic effect. Keep texture sizes small (e.g., 512x512 noise texture).
+
+This method ensures smooth performance on a webpage while mimicking the soft, layered look of the clouds in the image.
+
+To add shadow effects and gradient coloring to pixelated clouds in Pixi.js, enhance the Perlin noise shader approach:
+
+1. **Perlin Noise Layers**: Use multiple layers of Perlin noise with slight offsets. Combine them to create depth for shadows—lower layers for darker areas, higher for lighter.
+2. **Fragment Shader for Shadows**: In the shader, calculate a shadow factor by comparing noise layers. Darken pixels where lower layers are denser (e.g., multiply color by 0.6 for shadow).
+3. **Gradient Coloring**: Map noise values to a gradient. Use a color ramp (e.g., pink to orange, like the image) by interpolating between colors in the shader based on noise intensity.
+4. **Pixelation**: Apply quantization after shading and coloring to maintain the pixelated look.
+
+This keeps it real-time and GPU-efficient, avoiding OOM issues, while achieving the soft shadows and gradient hues of the clouds.

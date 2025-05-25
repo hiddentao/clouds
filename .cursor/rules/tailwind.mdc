@@ -1,0 +1,20 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+When building with TailwindCSS the following guidelines apply:
+
+* If you get errors regarding Tailwind utility classes not being found then check the docs at https://tailwindcss.com/docs prior to making any changes to see if the syntax is wrong.
+* If using with Vite then follow proper setup instructions at https://tailwindcss.com/docs/installation/using-vite to ensure Tailwind works with Vite.
+* Always use the `cn()` utility function from `lib/utils.ts` to combine class names rather than template strings. This ensures proper merging and handling of class names.
+* Never use template string interpolation (${}) for className values. Instead, use conditional arguments in the `cn()` function.
+
+Example:
+```tsx
+// GOOD: Using cn() utility
+className={cn("base-class", condition && "conditional-class", otherClass)}
+
+// BAD: Using template string
+className={`base-class ${condition ? "conditional-class" : ""} ${otherClass}`}
+```

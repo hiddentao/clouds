@@ -1,0 +1,29 @@
+{
+  "name": "cloudscape",
+  "version": "1.0.0",
+  "description": "Pixelated animated cloudscape using PixiJS",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "biome lint .",
+    "format": "biome format . --write",
+    "check": "biome check .",
+    "prepare": "husky install"
+  },
+  "dependencies": {
+    "pixi.js": "^7.4.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.8.3",
+    "@commitlint/cli": "^18.4.3",
+    "@commitlint/config-conventional": "^18.4.3",
+    "husky": "^8.0.3",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
