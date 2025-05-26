@@ -32,32 +32,26 @@ const skyGradientCalculator = {
         ] // Orange-pink to bright golden yellow
       case 'morning':
         return [
-          [0.5, 0.7, 0.95],
-          [0.65, 0.8, 0.98],
-          [0.8, 0.9, 1.0],
-          [0.9, 0.95, 1.0],
-        ] // Clear blue to very light blue
+          [0.9, 0.95, 1.0], // Light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.4, 0.6, 0.9], // Medium blue at edges
+        ]
       case 'solar_noon_transition':
-        return [
-          [0.5, 0.7, 0.95],
-          [0.65, 0.8, 0.98],
-          [0.8, 0.9, 1.0],
-          [0.9, 0.95, 1.0],
-        ] // Same as morning - clear blue to very light blue
       case 'solar_noon':
         return [
-          [0.5, 0.7, 0.95],
-          [0.65, 0.8, 0.98],
-          [0.8, 0.9, 1.0],
-          [0.9, 0.95, 1.0],
-        ] // Same as morning - clear blue to very light blue
+          [0.95, 0.98, 1.0], // Very light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.35, 0.55, 0.85], // Deeper blue at edges
+        ]
       case 'afternoon':
         return [
-          [0.5, 0.7, 0.95],
-          [0.65, 0.8, 0.98],
-          [0.8, 0.9, 1.0],
-          [0.9, 0.95, 1.0],
-        ] // Same as morning - clear blue to very light blue
+          [0.9, 0.95, 1.0], // Light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.4, 0.6, 0.9], // Medium blue at edges
+        ]
       case 'evening_transition':
         return [
           [0.5, 0.65, 0.9],
@@ -125,16 +119,16 @@ const skyGradientCalculator = {
       case 'night_before_dawn':
       case 'night_after_dusk':
         return {
-          cloudBaseColor: [0.15, 0.15, 0.2], // Dark blue-gray for night
-          cloudHighlightColor: [0.25, 0.25, 0.3], // Slightly lighter for highlights
-          cloudShadowColor: [0.08, 0.08, 0.12], // Very dark shadows
+          cloudBaseColor: [0.7, 0.7, 0.75], // Light gray for visibility
+          cloudHighlightColor: [0.85, 0.85, 0.9], // Lighter gray for highlights
+          cloudShadowColor: [0.5, 0.5, 0.55], // Medium gray shadows
         }
       case 'dawn':
       case 'dusk':
         return {
-          cloudBaseColor: [0.85, 0.8, 0.75], // Warm white with slight pink/orange tint
-          cloudHighlightColor: [0.95, 0.9, 0.85], // Bright warm white
-          cloudShadowColor: [0.4, 0.35, 0.4], // Purple-gray shadows
+          cloudBaseColor: [0.6, 0.6, 0.65], // Gray for contrast against colorful sky
+          cloudHighlightColor: [0.75, 0.75, 0.8], // Lighter gray for highlights
+          cloudShadowColor: [0.4, 0.4, 0.45], // Darker gray shadows
         }
       case 'sunrise':
       case 'sunset':
@@ -150,13 +144,13 @@ const skyGradientCalculator = {
         return {
           cloudBaseColor: [0.95, 0.95, 0.95], // Pure white base
           cloudHighlightColor: [1.0, 1.0, 1.0], // Pure white highlights
-          cloudShadowColor: [0.6, 0.6, 0.65], // Cool gray shadows
+          cloudShadowColor: [0.5, 0.55, 0.7], // Blue-tinted shadows for daytime
         }
       default:
         return {
           cloudBaseColor: [0.95, 0.95, 0.95], // Pure white base
           cloudHighlightColor: [1.0, 1.0, 1.0], // Pure white highlights
-          cloudShadowColor: [0.6, 0.6, 0.65], // Cool gray shadows
+          cloudShadowColor: [0.5, 0.55, 0.7], // Blue-tinted shadows for daytime
         }
     }
   },
@@ -472,25 +466,25 @@ const skyGradientCalculator = {
         ]
       case 'morning':
         return [
-          [1.0, 1.0, 0.95], // Bright white-yellow at sun
-          [0.8, 0.9, 1.0], // Light blue
-          [0.65, 0.8, 0.98], // Medium blue
-          [0.5, 0.7, 0.95], // Deeper blue at edges
+          [0.9, 0.95, 1.0], // Light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.4, 0.6, 0.9], // Medium blue at edges
         ]
       case 'solar_noon_transition':
       case 'solar_noon':
         return [
-          [1.0, 1.0, 0.95], // Same as morning - bright white-yellow at sun
-          [0.8, 0.9, 1.0], // Light blue
-          [0.65, 0.8, 0.98], // Medium blue
-          [0.5, 0.7, 0.95], // Deeper blue at edges
+          [0.95, 0.98, 1.0], // Very light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.35, 0.55, 0.85], // Deeper blue at edges
         ]
       case 'afternoon':
         return [
-          [1.0, 1.0, 0.95], // Same as morning - bright white-yellow at sun
-          [0.8, 0.9, 1.0], // Light blue
-          [0.65, 0.8, 0.98], // Medium blue
-          [0.5, 0.7, 0.95], // Deeper blue at edges
+          [0.9, 0.95, 1.0], // Light yellow-white at sun
+          [0.6, 0.75, 0.98], // Very light blue
+          [0.5, 0.7, 0.95], // Light blue
+          [0.4, 0.6, 0.9], // Medium blue at edges
         ]
       case 'evening_transition':
         return [

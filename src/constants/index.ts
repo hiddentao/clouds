@@ -15,9 +15,9 @@ export const CLOUD_CONFIG = {
 } as const
 
 export const DEPTH_CONFIG = {
-  DEFAULT_LAYERS: 10,
+  DEFAULT_LAYERS: 20,
   MIN_LAYERS: 5,
-  MAX_LAYERS: 30,
+  MAX_LAYERS: 40,
   SLICE_OVERLAP_FACTOR: 0.3,
   CONSTRAINED_CLOUD_PERCENTAGE: 0.75,
   DEPTH_MULTIPLIER_BASE: 0.6, // base multiplier for layer distribution

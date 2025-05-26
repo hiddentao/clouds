@@ -44,51 +44,40 @@ function _calculatePixelColorLogic(
   skyGradient: SkyGradient | null,
 ): number {
   const { isEdge, edgeDistance, brightness, shadowFactor } = pixelInfo
+
   if (skyGradient) {
-    // Determine if this is a daytime period where we need off-white clouds for visibility
-    const isDaytime = skyGradient.gradientType === 'radial' // Radial gradients are used for daytime
+    // Use the pre-calculated cloud colors from the sky gradient
+    const baseColor = skyGradient.cloudBaseColor
+    const highlightColor = skyGradient.cloudHighlightColor
+    const shadowColor = skyGradient.cloudShadowColor
 
-    // Determine if this is a colorful transition period (dawn/dusk/early evening)
-    // These periods need darker clouds for contrast against colorful skies
-    const isColorfulTransition = isColorfulTransitionPeriod(skyGradient)
-
-    // Use different base colors based on time period
+    // Determine which color to use based on shadow factor
     let finalColor: [number, number, number]
-    if (isColorfulTransition) {
-      // Darker clouds for dawn, dusk, and early evening periods
-      finalColor = [0.4, 0.35, 0.45] // Dark purple-gray for contrast
-    } else if (isDaytime) {
-      // Off-white with slight warm tint for better visibility against blue sky
-      finalColor = [0.95, 0.95, 0.92] // Slightly warm off-white
+
+    if (shadowFactor > 0.7) {
+      // Lit areas: interpolate between base and highlight colors
+      const highlightMix = (shadowFactor - 0.7) / 0.3 // 0 to 1 for shadowFactor 0.7 to 1.0
+      finalColor = [
+        baseColor[0] + (highlightColor[0] - baseColor[0]) * highlightMix,
+        baseColor[1] + (highlightColor[1] - baseColor[1]) * highlightMix,
+        baseColor[2] + (highlightColor[2] - baseColor[2]) * highlightMix,
+      ]
     } else {
-      // Pure white for night periods
-      finalColor = [1.0, 1.0, 1.0]
+      // Shadow areas: interpolate between shadow and base colors
+      const shadowMix = shadowFactor / 0.7 // 0 to 1 for shadowFactor 0.0 to 0.7
+      finalColor = [
+        shadowColor[0] + (baseColor[0] - shadowColor[0]) * shadowMix,
+        shadowColor[1] + (baseColor[1] - shadowColor[1]) * shadowMix,
+        shadowColor[2] + (baseColor[2] - shadowColor[2]) * shadowMix,
+      ]
     }
 
-    // Apply brightness variation but keep it subtle for sharper edges
-    const brightnessVariation = isColorfulTransition
-      ? 0.6 + brightness * 0.3
-      : // More variation for colorful periods
-        0.8 + brightness * 0.2 // Less variation for other times
-
+    // Apply subtle brightness variation
+    const brightnessVariation = 0.85 + brightness * 0.15
     finalColor = [
       Math.min(1.0, finalColor[0] * brightnessVariation),
       Math.min(1.0, finalColor[1] * brightnessVariation),
       Math.min(1.0, finalColor[2] * brightnessVariation),
-    ]
-
-    // Apply shadow factor to create contrast
-    // Shadow factor ranges from 0 (full shadow) to 1 (no shadow)
-    // For colorful transition periods, enhance shadows for more dramatic contrast
-    const shadowMultiplier = isColorfulTransition
-      ? 0.2 + shadowFactor * 0.6
-      : // Stronger shadows (0.2 to 0.8)
-        0.3 + shadowFactor * 0.7 // Normal shadows (0.3 to 1.0)
-
-    finalColor = [
-      finalColor[0] * shadowMultiplier,
-      finalColor[1] * shadowMultiplier,
-      finalColor[2] * shadowMultiplier,
     ]
 
     const r = Math.round(Math.min(255, finalColor[0] * 255))
@@ -96,36 +85,10 @@ function _calculatePixelColorLogic(
     const b = Math.round(Math.min(255, finalColor[2] * 255))
     return (r << 16) | (g << 8) | b
   }
+
+  // Fallback to grayscale if no sky gradient
   const gray = Math.floor(brightness * 255)
   return (gray << 16) | (gray << 8) | gray
-}
-
-// Helper function to determine if this is a colorful transition period
-function isColorfulTransitionPeriod(skyGradient: SkyGradient): boolean {
-  if (!skyGradient.gradientColors || skyGradient.gradientColors.length === 0) {
-    return false
-  }
-
-  // Check if the sky has warm/colorful tones typical of dawn/dusk/early evening
-  // Look for orange, pink, purple, or red tones in the gradient
-  for (const color of skyGradient.gradientColors) {
-    const [r, g, b] = color
-
-    // Check for warm sunset/sunrise colors
-    const isWarmOrange = r > 0.7 && g > 0.4 && g < 0.8 && b < 0.6 // Orange tones
-    const isPink = r > 0.6 && g < 0.6 && b > 0.4 && b < 0.8 // Pink tones
-    const isPurple = r > 0.4 && r < 0.8 && g < 0.5 && b > 0.5 // Purple tones
-    const isDeepRed = r > 0.6 && g < 0.4 && b < 0.4 // Deep red tones
-
-    // Check for evening blue-purple transition
-    const isEveningBlue = r < 0.6 && g < 0.7 && b > 0.8 && r + g < 1.0 // Evening blue
-
-    if (isWarmOrange || isPink || isPurple || isDeepRed || isEveningBlue) {
-      return true
-    }
-  }
-
-  return false
 }
 
 function _getBaseYForDepthLayer(layerConfig: any, screenHeight: number, seed: number): number {
@@ -534,13 +497,41 @@ const cloudDataGenerator = {
   ): FullCloudData {
     const seedBase = Date.now() + _simpleRandom(Math.random() * 1000) * 10000 // Base seed for this cloud
 
-    const fragmentTypesArray: Array<'wispy' | 'puffy' | 'dense' | 'scattered'> = [
-      'wispy',
-      'puffy',
-      'dense',
-      'scattered',
-    ]
-    const type = fragmentTypesArray[Math.floor(_simpleRandom(seedBase) * fragmentTypesArray.length)]
+    // Determine if this is daytime based on sky gradient (if available)
+    let isDaytime = false
+    if (initialSkyGradient?.cloudBaseColor) {
+      const baseColor = initialSkyGradient.cloudBaseColor
+      isDaytime = baseColor[0] > 0.8 && baseColor[1] > 0.8 && baseColor[2] > 0.8
+    }
+
+    // Select cloud type based on time of day
+    let type: 'wispy' | 'puffy' | 'dense' | 'scattered'
+    const randomValue = _simpleRandom(seedBase)
+
+    if (isDaytime) {
+      // Daytime: favor puffy and dense clouds (70% chance)
+      if (randomValue < 0.4) {
+        type = 'puffy'
+      } else if (randomValue < 0.7) {
+        type = 'dense'
+      } else if (randomValue < 0.85) {
+        type = 'scattered'
+      } else {
+        type = 'wispy'
+      }
+    } else {
+      // Nighttime: favor wispy and scattered clouds (70% chance)
+      if (randomValue < 0.4) {
+        type = 'wispy'
+      } else if (randomValue < 0.7) {
+        type = 'scattered'
+      } else if (randomValue < 0.85) {
+        type = 'puffy'
+      } else {
+        type = 'dense'
+      }
+    }
+
     const currentTypeKey = type as CloudTypeKey
 
     const depthLayers = depthLayersInput || generateDepthLayers(30)

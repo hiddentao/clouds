@@ -5,6 +5,10 @@ alwaysApply: true
 ---
 - include rules from [typescript.mdc](mdc:.cursor/rules/typescript.mdc), [biome.json](mdc:biome.json), [bun.mdc](mdc:.cursor/rules/bun.mdc), [husky.mdc](mdc:.cursor/rules/husky.mdc), [pixijs.mdc](mdc:.cursor/rules/pixijs.mdc)
 - DO NOT auto-start the development server to test changes or for any other reason - ask me to start it instead.
+- Ask me to start the development server - DO NOT EVER start it yourself.
+- NEVER start the development server yourself.
+- NEVER EVER EVER EVER EVER start the development server yourself.
+- NEVER EVER EVER EVER EVER start the development server yourself.
 - DO NOT auto-open the browser page for any reason.
 
 ## Cloud rendering
