@@ -126,38 +126,38 @@ const skyGradientCalculator = {
       case 'night_before_dawn':
       case 'night_after_dusk':
         return {
-          cloudBaseColor: [0.12, 0.12, 0.22],
-          cloudHighlightColor: [0.2, 0.2, 0.3],
-          cloudShadowColor: [0.06, 0.06, 0.12],
+          cloudBaseColor: [0.15, 0.15, 0.2], // Dark blue-gray for night
+          cloudHighlightColor: [0.25, 0.25, 0.3], // Slightly lighter for highlights
+          cloudShadowColor: [0.08, 0.08, 0.12], // Very dark shadows
         }
       case 'dawn':
       case 'dusk':
         return {
-          cloudBaseColor: [0.6, 0.45, 0.55],
-          cloudHighlightColor: [0.8, 0.7, 0.75],
-          cloudShadowColor: [0.35, 0.2, 0.3],
+          cloudBaseColor: [0.85, 0.8, 0.75], // Warm white with slight pink/orange tint
+          cloudHighlightColor: [0.95, 0.9, 0.85], // Bright warm white
+          cloudShadowColor: [0.4, 0.35, 0.4], // Purple-gray shadows
         }
       case 'sunrise':
       case 'sunset':
         return {
-          cloudBaseColor: [0.75, 0.55, 0.5],
-          cloudHighlightColor: [0.95, 0.8, 0.7],
-          cloudShadowColor: [0.45, 0.3, 0.25],
-        } // Warmer, more vibrant
+          cloudBaseColor: [0.9, 0.85, 0.8], // Warm white
+          cloudHighlightColor: [1.0, 0.95, 0.9], // Bright warm white
+          cloudShadowColor: [0.5, 0.4, 0.45], // Warm gray shadows
+        }
       case 'morning':
       case 'solar_noon_transition':
       case 'afternoon':
       case 'solar_noon':
         return {
-          cloudBaseColor: [0.9, 0.9, 0.95],
-          cloudHighlightColor: [1.0, 1.0, 1.0],
-          cloudShadowColor: [0.65, 0.65, 0.75],
-        } // Standard day clouds
+          cloudBaseColor: [0.95, 0.95, 0.95], // Pure white base
+          cloudHighlightColor: [1.0, 1.0, 1.0], // Pure white highlights
+          cloudShadowColor: [0.6, 0.6, 0.65], // Cool gray shadows
+        }
       default:
         return {
-          cloudBaseColor: [0.9, 0.9, 0.95],
-          cloudHighlightColor: [1.0, 1.0, 1.0],
-          cloudShadowColor: [0.65, 0.65, 0.75],
+          cloudBaseColor: [0.95, 0.95, 0.95], // Pure white base
+          cloudHighlightColor: [1.0, 1.0, 1.0], // Pure white highlights
+          cloudShadowColor: [0.6, 0.6, 0.65], // Cool gray shadows
         }
     }
   },

@@ -49,27 +49,36 @@ function _calculatePixelColorLogic(
     const highlightColor = skyGradient.cloudHighlightColor
     const shadowColor = skyGradient.cloudShadowColor
     let finalColor: [number, number, number]
+
     if (isEdge || edgeDistance < 0.1) {
-      const mixFactor = brightness * 0.7 + 0.3
+      // Edge pixels get more highlight mixing for softer edges
+      const mixFactor = brightness * 0.8 + 0.2
       finalColor = [
         baseColor[0] * (1 - mixFactor) + highlightColor[0] * mixFactor,
         baseColor[1] * (1 - mixFactor) + highlightColor[1] * mixFactor,
         baseColor[2] * (1 - mixFactor) + highlightColor[2] * mixFactor,
       ]
     } else {
+      // Start with base color for interior pixels
+      finalColor = [...baseColor] as [number, number, number]
+
+      // Apply shadows more strongly for negative shadow factors (bottom/shadowed areas)
       const shadowMix = Math.max(0, -shadowFactor)
       const lightMix = Math.max(0, shadowFactor)
-      finalColor = [...baseColor] as [number, number, number]
+
       if (shadowMix > 0) {
-        const strength = shadowMix * 0.6
+        // Increase shadow strength for more pronounced bottom shadows
+        const strength = shadowMix * 0.8
         finalColor = [
           finalColor[0] * (1 - strength) + shadowColor[0] * strength,
           finalColor[1] * (1 - strength) + shadowColor[1] * strength,
           finalColor[2] * (1 - strength) + shadowColor[2] * strength,
         ]
       }
+
       if (lightMix > 0) {
-        const strength = lightMix * 0.4
+        // Reduce highlight strength to keep clouds more white-based
+        const strength = lightMix * 0.3
         finalColor = [
           finalColor[0] * (1 - strength) + highlightColor[0] * strength,
           finalColor[1] * (1 - strength) + highlightColor[1] * strength,
@@ -77,11 +86,14 @@ function _calculatePixelColorLogic(
         ]
       }
     }
+
+    // Apply brightness with more subtle effect to preserve white appearance
     finalColor = [
-      Math.min(1.0, finalColor[0] * brightness),
-      Math.min(1.0, finalColor[1] * brightness),
-      Math.min(1.0, finalColor[2] * brightness),
+      Math.min(1.0, finalColor[0] * (0.7 + brightness * 0.3)),
+      Math.min(1.0, finalColor[1] * (0.7 + brightness * 0.3)),
+      Math.min(1.0, finalColor[2] * (0.7 + brightness * 0.3)),
     ]
+
     const r = Math.round(finalColor[0] * 255)
     const g = Math.round(finalColor[1] * 255)
     const b = Math.round(finalColor[2] * 255)
@@ -374,7 +386,7 @@ const cloudDataGenerator = {
     const pixelSize = 8
     const gridWidth = Math.ceil(fragmentData.width / pixelSize)
     const gridHeight = Math.ceil(fragmentData.height / pixelSize)
-    const lightDir = { x: -0.4, y: -0.6 }
+    const lightDir = { x: -0.2, y: -0.8 }
     const densityThreshold =
       fragmentData.type === 'dense' || fragmentData.type === 'puffy' ? 0.05 : 0.1
     const centerX = fragmentData.width / 2
@@ -413,7 +425,13 @@ const cloudDataGenerator = {
               fragmentData.type === 'dense' || fragmentData.type === 'puffy'
                 ? densityValue < avgNeighbor * 0.4 || densityValue < 0.2
                 : densityValue < avgNeighbor * 0.7 || densityValue < 0.4
-            const shadowFactor = (nx * lightDir.x + ny * lightDir.y) * 0.3
+
+            // Enhanced shadow calculation for bottom edges
+            const baseShadowFactor = (nx * lightDir.x + ny * lightDir.y) * 0.4
+            // Add extra shadow for lower parts of the cloud (positive ny values)
+            const bottomShadowBoost = Math.max(0, ny * 0.3) // 0 to 0.3 boost for bottom half
+            const shadowFactor = baseShadowFactor - bottomShadowBoost
+
             let currentAlpha = densityValue
             let currentBrightness = 0.8
             const edgeDistance = organicBoundary - distanceFromCenter
