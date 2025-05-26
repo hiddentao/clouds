@@ -32,6 +32,8 @@ export class CloudscapeRenderer {
   private depthContainers: Map<string, PIXI.Container> = new Map()
   private skyContainer: PIXI.Container
   private skySprite: PIXI.Sprite | null = null
+  private radialGradientContainer: PIXI.Container | null = null
+  private radialGradientSprite: PIXI.Sprite | null = null
   private starsContainer: PIXI.Container
   private stars: StarGraphics[] = []
   private time = 0
@@ -68,10 +70,12 @@ export class CloudscapeRenderer {
     })
 
     this.skyContainer = new PIXI.Container()
+    this.radialGradientContainer = new PIXI.Container()
     this.starsContainer = new PIXI.Container()
     this.cloudContainer = new PIXI.Container()
 
     this.app.stage.addChild(this.skyContainer)
+    this.app.stage.addChild(this.radialGradientContainer)
     this.app.stage.addChild(this.starsContainer)
     this.app.stage.addChild(this.cloudContainer)
 
@@ -190,43 +194,123 @@ export class CloudscapeRenderer {
 
   private async updateSkyBackground(): Promise<void> {
     if (!this.skySprite) {
-      // Should have been created in initialize
       console.error('skySprite not initialized before updateSkyBackground call')
       return
     }
 
     if (!this.currentSkyGradient) {
-      this.skySprite.visible = false // Hide if no gradient data
+      this.skySprite.visible = false
+      if (this.radialGradientContainer) {
+        this.radialGradientContainer.visible = false
+      }
       return
     }
-    this.skySprite.visible = true
 
-    const graphics = new PIXI.Graphics()
     const gradientColors = this.currentSkyGradient.gradientColors
-    const totalStrips = 100
-    const stripHeight = this.app.screen.height / totalStrips
-    for (let i = 0; i < totalStrips; i++) {
-      const t = i / (totalStrips - 1)
-      const segmentSize = 1 / (gradientColors.length - 1)
-      const segmentIndex = Math.floor(t / segmentSize)
-      const segmentT = (t % segmentSize) / segmentSize
-      const color1 = gradientColors[Math.min(segmentIndex, gradientColors.length - 1)]
-      const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)]
-      const r = Math.round((color1[0] + (color2[0] - color1[0]) * segmentT) * 255)
-      const g = Math.round((color1[1] + (color2[1] - color1[1]) * segmentT) * 255)
-      const b = Math.round((color1[2] + (color2[2] - color1[2]) * segmentT) * 255)
-      const color = (r << 16) | (g << 8) | b
-      graphics.beginFill(color)
-      graphics.drawRect(0, i * stripHeight, this.app.screen.width, stripHeight + 1)
-      graphics.endFill()
-    }
 
-    const newTexture = this.app.renderer.generateTexture(graphics)
-    if (this.skySprite.texture) {
-      this.skySprite.texture.destroy(true) // Destroy old texture before assigning new one
+    if (
+      this.currentSkyGradient.gradientType === 'radial' &&
+      this.currentSkyGradient.radialGradientCenter
+    ) {
+      // Hide linear gradient sprite and show radial gradient container
+      this.skySprite.visible = false
+
+      if (!this.radialGradientContainer) {
+        console.error('radialGradientContainer not initialized')
+        return
+      }
+
+      this.radialGradientContainer.visible = true
+
+      // Create radial gradient centered at origin (0,0)
+      const graphics = new PIXI.Graphics()
+      const maxRadius =
+        (this.currentSkyGradient.radialGradientRadius || 1.5) *
+        Math.max(this.app.screen.width, this.app.screen.height)
+
+      // Create concentric circles from outside to inside (so inner colors render on top)
+      const numRings = 60
+      const radiusStep = maxRadius / numRings
+
+      for (let i = numRings - 1; i >= 0; i--) {
+        const t = i / (numRings - 1)
+        const radius = (i + 1) * radiusStep
+
+        // Interpolate color based on distance from center
+        const segmentSize = 1 / (gradientColors.length - 1)
+        const segmentIndex = Math.floor(t / segmentSize)
+        const segmentT = (t % segmentSize) / segmentSize
+        const color1 = gradientColors[Math.min(segmentIndex, gradientColors.length - 1)]
+        const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)]
+
+        const r = Math.round((color1[0] + (color2[0] - color1[0]) * segmentT) * 255)
+        const g = Math.round((color1[1] + (color2[1] - color1[1]) * segmentT) * 255)
+        const b = Math.round((color1[2] + (color2[2] - color1[2]) * segmentT) * 255)
+        const color = (r << 16) | (g << 8) | b
+
+        graphics.beginFill(color)
+        graphics.drawCircle(0, 0, radius) // Draw centered at origin
+        graphics.endFill()
+      }
+
+      // Generate texture from graphics
+      const radialTexture = this.app.renderer.generateTexture(graphics)
+      graphics.destroy()
+
+      // Create or update radial gradient sprite
+      if (!this.radialGradientSprite) {
+        this.radialGradientSprite = new PIXI.Sprite(radialTexture)
+        this.radialGradientContainer.addChild(this.radialGradientSprite)
+      } else {
+        // Destroy old texture and assign new one
+        if (this.radialGradientSprite.texture) {
+          this.radialGradientSprite.texture.destroy(true)
+        }
+        this.radialGradientSprite.texture = radialTexture
+      }
+
+      // Set anchor to center so positioning works correctly
+      this.radialGradientSprite.anchor.set(0.5, 0.5)
+
+      // Position the container at the sun's viewport position
+      const sunX = this.currentSkyGradient.radialGradientCenter.x * this.app.screen.width
+      const sunY = this.currentSkyGradient.radialGradientCenter.y * this.app.screen.height
+      this.radialGradientContainer.position.set(sunX, sunY)
+    } else {
+      // Hide radial gradient and show linear gradient sprite
+      if (this.radialGradientContainer) {
+        this.radialGradientContainer.visible = false
+      }
+      this.skySprite.visible = true
+
+      // Render linear gradient (legacy system for nighttime)
+      const graphics = new PIXI.Graphics()
+      const totalStrips = 100
+      const stripHeight = this.app.screen.height / totalStrips
+
+      for (let i = 0; i < totalStrips; i++) {
+        const t = i / (totalStrips - 1)
+        const segmentSize = 1 / (gradientColors.length - 1)
+        const segmentIndex = Math.floor(t / segmentSize)
+        const segmentT = (t % segmentSize) / segmentSize
+        const color1 = gradientColors[Math.min(segmentIndex, gradientColors.length - 1)]
+        const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)]
+        const r = Math.round((color1[0] + (color2[0] - color1[0]) * segmentT) * 255)
+        const g = Math.round((color1[1] + (color2[1] - color1[1]) * segmentT) * 255)
+        const b = Math.round((color1[2] + (color2[2] - color1[2]) * segmentT) * 255)
+        const color = (r << 16) | (g << 8) | b
+        graphics.beginFill(color)
+        graphics.drawRect(0, i * stripHeight, this.app.screen.width, stripHeight + 1)
+        graphics.endFill()
+      }
+
+      const newTexture = this.app.renderer.generateTexture(graphics)
+      if (this.skySprite.texture) {
+        this.skySprite.texture.destroy(true)
+      }
+      this.skySprite.texture = newTexture
+      graphics.destroy()
     }
-    this.skySprite.texture = newTexture
-    graphics.destroy()
   }
 
   private calculateCloudCountsPerLayer(): Map<string, number> {
@@ -252,27 +336,42 @@ export class CloudscapeRenderer {
   }
 
   private async createInitialClouds(): Promise<void> {
-    const cloudPromises: Promise<CloudFragment | null>[] = []
+    console.log('Starting createInitialClouds...')
+
+    // Check if worker is available
+    if (!this.cloudDataWorker) {
+      console.error('Cloud data worker is not available!')
+      return
+    }
+
     const targetCloudCounts = this.calculateCloudCountsPerLayer()
+    console.log('Target cloud counts:', targetCloudCounts)
 
     // Create a more natural distribution across the entire visible area
     const totalScreenWidth = this.app.screen.width
     const extendedWidth = totalScreenWidth * 2.5 // Cover more area for natural flow
     const startX = -CLOUD_CONFIG.RESPAWN_MARGIN - totalScreenWidth * 0.5
 
+    // Create clouds in batches to prevent OOM
+    const BATCH_SIZE = 5 // Create 5 clouds at a time
+    const allCloudSpecs: Array<{ x: number; layerKey: string }> = []
+
+    // First, collect all cloud specifications without creating them
     for (const [layerKey, targetCount] of targetCloudCounts) {
+      console.log(`Planning clouds for layer ${layerKey}: ${targetCount} clouds`)
+
       // Ensure at least some clouds are visible on screen immediately
       const visibleClouds = Math.max(1, Math.floor(targetCount * 0.6)) // 60% visible
       const offScreenClouds = targetCount - visibleClouds
 
-      // Create visible clouds first - spread them across the screen
+      // Plan visible clouds first - spread them across the screen
       for (let i = 0; i < visibleClouds; i++) {
         const x =
           (i / Math.max(1, visibleClouds - 1)) * totalScreenWidth * 0.8 + totalScreenWidth * 0.1 // Spread across 80% of screen width
-        cloudPromises.push(this.spawnCloud(x, layerKey, this.currentSkyGradient))
+        allCloudSpecs.push({ x, layerKey })
       }
 
-      // Create off-screen clouds for natural flow
+      // Plan off-screen clouds for natural flow
       if (offScreenClouds > 0) {
         const targetSpacing = extendedWidth / offScreenClouds
         let currentX = startX
@@ -293,13 +392,34 @@ export class CloudscapeRenderer {
             currentX += targetSpacing + spacingVariation
           }
 
-          cloudPromises.push(this.spawnCloud(currentX, layerKey, this.currentSkyGradient))
+          allCloudSpecs.push({ x: currentX, layerKey })
         }
       }
     }
 
-    const newCloudsWithNulls = await Promise.all(cloudPromises)
-    const newClouds = newCloudsWithNulls.filter((c) => c !== null) as CloudFragment[]
+    console.log(`Planning to create ${allCloudSpecs.length} clouds in batches of ${BATCH_SIZE}`)
+
+    // Create clouds in batches with delays between batches
+    const newClouds: CloudFragment[] = []
+    for (let i = 0; i < allCloudSpecs.length; i += BATCH_SIZE) {
+      const batch = allCloudSpecs.slice(i, i + BATCH_SIZE)
+      console.log(
+        `Creating batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(allCloudSpecs.length / BATCH_SIZE)} (${batch.length} clouds)`,
+      )
+
+      const batchPromises = batch.map((spec) =>
+        this.spawnCloud(spec.x, spec.layerKey, this.currentSkyGradient),
+      )
+
+      const batchResults = await Promise.all(batchPromises)
+      const validClouds = batchResults.filter((c) => c !== null) as CloudFragment[]
+      newClouds.push(...validClouds)
+
+      // Small delay between batches to prevent overwhelming the worker
+      if (i + BATCH_SIZE < allCloudSpecs.length) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
 
     // Calculate total expected clouds for better logging
     const totalExpectedClouds = Array.from(targetCloudCounts.values()).reduce(
@@ -326,14 +446,28 @@ export class CloudscapeRenderer {
       )
     }
 
-    // Initial drawing for new clouds
-    const initialDrawPromises = newClouds.map((cloud) => {
-      if (this.currentSkyGradient) {
-        return cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
+    // Initial drawing for new clouds in batches
+    console.log('Starting initial drawing for clouds in batches...')
+    const DRAW_BATCH_SIZE = 10 // Draw 10 clouds at a time
+    for (let i = 0; i < newClouds.length; i += DRAW_BATCH_SIZE) {
+      const drawBatch = newClouds.slice(i, i + DRAW_BATCH_SIZE)
+      const drawPromises = drawBatch.map((cloud) => {
+        if (this.currentSkyGradient) {
+          return cloud.updateSkyGradient(
+            this.currentSkyGradient,
+            this.app.renderer as PIXI.Renderer,
+          )
+        }
+        return Promise.resolve()
+      })
+      await Promise.all(drawPromises)
+
+      // Small delay between draw batches
+      if (i + DRAW_BATCH_SIZE < newClouds.length) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
       }
-      return Promise.resolve()
-    })
-    await Promise.all(initialDrawPromises)
+    }
+    console.log('Initial drawing completed')
   }
 
   private async spawnCloud(
@@ -363,66 +497,71 @@ export class CloudscapeRenderer {
       return null // Cannot proceed without layer configuration
     }
 
-    const cloud = await CloudFragment.create(
-      this.cloudDataWorker,
-      this.app.screen.width,
-      this.app.screen.height,
-      this.currentDepthLayers,
-      initialSkyGradientForWorker,
-    )
+    try {
+      const cloud = await CloudFragment.create(
+        this.cloudDataWorker,
+        this.app.screen.width,
+        this.app.screen.height,
+        this.currentDepthLayers,
+        initialSkyGradientForWorker,
+      )
 
-    cloud.data.depthLayer = selectedLayerKey // No longer needs assertion
-    cloud.data.depth = layerConfig.depth
-    cloud.data.speedMultiplier = layerConfig.speedMultiplier
+      cloud.data.depthLayer = selectedLayerKey // No longer needs assertion
+      cloud.data.depth = layerConfig.depth
+      cloud.data.speedMultiplier = layerConfig.speedMultiplier
 
-    const scale =
-      layerConfig.scaleRange.min +
-      Math.random() * (layerConfig.scaleRange.max - layerConfig.scaleRange.min)
-    const alpha =
-      layerConfig.alphaRange.min +
-      Math.random() * (layerConfig.alphaRange.max - layerConfig.alphaRange.min)
-    cloud.data.scale = scale
-    cloud.data.alpha = alpha * cloud.data.density // Alpha is now part of fragmentData from worker
-    cloud.data.width = (cloud.data.width / (cloud.data.scale || 1)) * scale // Adjust size based on new scale
-    cloud.data.height = (cloud.data.height / (cloud.data.scale || 1)) * scale
+      const scale =
+        layerConfig.scaleRange.min +
+        Math.random() * (layerConfig.scaleRange.max - layerConfig.scaleRange.min)
+      const alpha =
+        layerConfig.alphaRange.min +
+        Math.random() * (layerConfig.alphaRange.max - layerConfig.alphaRange.min)
+      cloud.data.scale = scale
+      cloud.data.alpha = alpha * cloud.data.density // Alpha is now part of fragmentData from worker
+      cloud.data.width = (cloud.data.width / (cloud.data.scale || 1)) * scale // Adjust size based on new scale
+      cloud.data.height = (cloud.data.height / (cloud.data.scale || 1)) * scale
 
-    const baseY = this.getBaseYForLayer(layerConfig)
-    cloud.data.y = baseY + (Math.random() - 0.5) * this.app.screen.height * 0.1
-    cloud.data.speed = this.cloudSettings.speed * cloud.data.speedMultiplier
+      const baseY = this.getBaseYForLayer(layerConfig)
+      cloud.data.y = baseY + (Math.random() - 0.5) * this.app.screen.height * 0.1
+      cloud.data.speed = this.cloudSettings.speed * cloud.data.speedMultiplier
 
-    if (initialX !== undefined) {
-      cloud.data.x = initialX
-    } else {
-      // More natural spawn positioning with variation
-      const baseSpawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + 100
-      const randomVariation = Math.random() * 600 // 0-600px variation
-      const depthVariation = (1 - layerConfig.depth) * 200 // Farther clouds spawn further out
-      cloud.data.x = this.app.screen.width + baseSpawnDistance + randomVariation + depthVariation
-    }
+      if (initialX !== undefined) {
+        cloud.data.x = initialX
+      } else {
+        // More natural spawn positioning with variation
+        const baseSpawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + 100
+        const randomVariation = Math.random() * 600 // 0-600px variation
+        const depthVariation = (1 - layerConfig.depth) * 200 // Farther clouds spawn further out
+        cloud.data.x = this.app.screen.width + baseSpawnDistance + randomVariation + depthVariation
+      }
 
-    cloud.displayObject.alpha = cloud.data.alpha // Set final alpha on the sprite
+      cloud.displayObject.alpha = cloud.data.alpha // Set final alpha on the sprite
 
-    this.cloudFragments.push(cloud)
-    const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
-    if (depthContainer) {
-      depthContainer.addChild(cloud.displayObject)
-    } else {
-      console.error(`No depth container found for layer: ${cloud.data.depthLayer}`)
+      this.cloudFragments.push(cloud)
+      const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
+      if (depthContainer) {
+        depthContainer.addChild(cloud.displayObject)
+      } else {
+        console.error(`No depth container found for layer: ${cloud.data.depthLayer}`)
+        return null
+      }
+
+      // The first updateSkyGradient (if skyGradient is present and different or texture not ready)
+      // will handle the initial drawing to the render texture.
+      // If initialSkyGradientForWorker was null, and this.currentSkyGradient is now available,
+      // this call will trigger the first color calculation and draw.
+      if (this.currentSkyGradient) {
+        await cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
+      } else {
+        // Even without sky gradient, ensure the cloud texture is drawn
+        await cloud.updateSkyGradient(null, this.app.renderer as PIXI.Renderer)
+      }
+
+      return cloud
+    } catch (error) {
+      console.error('Error creating cloud fragment:', error)
       return null
     }
-
-    // The first updateSkyGradient (if skyGradient is present and different or texture not ready)
-    // will handle the initial drawing to the render texture.
-    // If initialSkyGradientForWorker was null, and this.currentSkyGradient is now available,
-    // this call will trigger the first color calculation and draw.
-    if (this.currentSkyGradient) {
-      await cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
-    } else {
-      // Even without sky gradient, ensure the cloud texture is drawn
-      await cloud.updateSkyGradient(null, this.app.renderer as PIXI.Renderer)
-    }
-
-    return cloud
   }
 
   private async checkAndSpawnClouds(): Promise<void> {
@@ -508,6 +647,9 @@ export class CloudscapeRenderer {
     // Recreate stars for new screen size
     this.destroyStars()
     this.createStars()
+
+    // Update sky background to handle new screen dimensions
+    this.updateSkyBackground()
   }
 
   private startAnimation(): void {
@@ -570,6 +712,9 @@ export class CloudscapeRenderer {
           )
         }
 
+        // Add a small delay to ensure cleanup is complete
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
         // Create new clouds with proper error handling
         await this.createInitialClouds()
         console.log(`Cloud settings updated: ${this.cloudFragments.length} clouds created`)
@@ -599,6 +744,17 @@ export class CloudscapeRenderer {
     this.cloudFragments = []
     this.destroyStars()
     this.skySprite?.destroy()
+
+    // Clean up radial gradient resources
+    if (this.radialGradientSprite) {
+      this.radialGradientSprite.destroy()
+      this.radialGradientSprite = null
+    }
+    if (this.radialGradientContainer) {
+      this.radialGradientContainer.destroy()
+      this.radialGradientContainer = null
+    }
+
     this.sidebar.destroy()
     this.app.destroy(true)
   }

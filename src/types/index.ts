@@ -38,11 +38,16 @@ export type TimeOfDay =
   | 'deep_night' // Astronomical dusk to midnight / Midnight to astronomical dawn
 
 export interface SkyGradient {
-  gradientColors: [number, number, number][] // Array of colors from top to bottom
+  gradientColors: [number, number, number][] // Array of colors from top to bottom (for linear) or center to edge (for radial)
   sunColor: [number, number, number]
   cloudBaseColor: [number, number, number]
   cloudHighlightColor: [number, number, number]
   cloudShadowColor: [number, number, number]
+  sunViewportPosition: { x: number; y: number } // Sun position in viewport coordinates (0-1 range)
+  lightDirection: { x: number; y: number } // Normalized light direction vector for cloud shadows
+  gradientType: 'linear' | 'radial' // Type of gradient to use
+  radialGradientCenter?: { x: number; y: number } // Center point for radial gradient (viewport coordinates)
+  radialGradientRadius?: number // Radius for radial gradient (viewport units)
 }
 
 export interface CloudFragmentData {

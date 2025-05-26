@@ -39,25 +39,25 @@ const skyGradientCalculator = {
         ] // Clear blue to very light blue
       case 'solar_noon_transition':
         return [
-          [0.55, 0.75, 1.0],
-          [0.7, 0.85, 1.0],
-          [0.85, 0.92, 1.0],
-          [0.95, 0.98, 1.0],
-        ] // Bright blue to almost white blue
+          [0.5, 0.7, 0.95],
+          [0.65, 0.8, 0.98],
+          [0.8, 0.9, 1.0],
+          [0.9, 0.95, 1.0],
+        ] // Same as morning - clear blue to very light blue
       case 'solar_noon':
         return [
-          [0.6, 0.8, 1.0],
-          [0.85, 0.92, 1.0],
-          [0.98, 0.99, 1.0],
-          [1.0, 1.0, 1.0],
-        ] // Pure blue to pure white
+          [0.5, 0.7, 0.95],
+          [0.65, 0.8, 0.98],
+          [0.8, 0.9, 1.0],
+          [0.9, 0.95, 1.0],
+        ] // Same as morning - clear blue to very light blue
       case 'afternoon':
         return [
-          [0.58, 0.78, 1.0],
-          [0.72, 0.86, 1.0],
-          [0.86, 0.93, 1.0],
-          [0.93, 0.96, 1.0],
-        ] // Clear blue (slightly warmer) to almost white
+          [0.5, 0.7, 0.95],
+          [0.65, 0.8, 0.98],
+          [0.8, 0.9, 1.0],
+          [0.9, 0.95, 1.0],
+        ] // Same as morning - clear blue to very light blue
       case 'evening_transition':
         return [
           [0.5, 0.65, 0.9],
@@ -108,9 +108,8 @@ const skyGradientCalculator = {
       case 'morning':
       case 'afternoon':
       case 'solar_noon_transition':
-        return [1.0, 1.0, 0.9] // Bright yellow-white for day
       case 'solar_noon':
-        return [1.0, 1.0, 1.0] // Pure white at noon
+        return [1.0, 1.0, 0.9] // Bright yellow-white for all daytime periods
       default:
         return [1.0, 1.0, 0.9]
     }
@@ -260,16 +259,40 @@ const skyGradientCalculator = {
     const currentPeriodName = sunPosition.currentTimePeriod.name
     const transitionInfo = this.calculateTransitionInfo(sunPosition, currentTimeEpochMs)
 
-    const currentGradientColors = this.getGradientColorsForTimeOfDay(currentPeriodName)
+    // Determine gradient type and colors
+    const useRadialGradient = this.shouldUseRadialGradient(currentPeriodName)
+    const currentGradientColors = useRadialGradient
+      ? this.getRadialGradientColorsForTimeOfDay(currentPeriodName)
+      : this.getGradientColorsForTimeOfDay(currentPeriodName)
+
     const currentCloudColors = this.getCloudColorsForTimeOfDay(currentPeriodName)
     const currentSunColor = this.getSunColorForTimeOfDay(currentPeriodName)
 
+    // Calculate sun position and light direction
+    const sunPositionData = this.calculateSunViewportPosition(currentPeriodName, sunPosition)
+
     if (transitionInfo.isTransitioning && transitionInfo.nextTimeOfDayName !== currentPeriodName) {
-      const nextGradientColors = this.getGradientColorsForTimeOfDay(
-        transitionInfo.nextTimeOfDayName,
-      )
+      const nextUseRadialGradient = this.shouldUseRadialGradient(transitionInfo.nextTimeOfDayName)
+      const nextGradientColors = nextUseRadialGradient
+        ? this.getRadialGradientColorsForTimeOfDay(transitionInfo.nextTimeOfDayName)
+        : this.getGradientColorsForTimeOfDay(transitionInfo.nextTimeOfDayName)
+
       const nextCloudColors = this.getCloudColorsForTimeOfDay(transitionInfo.nextTimeOfDayName)
       const nextSunColor = this.getSunColorForTimeOfDay(transitionInfo.nextTimeOfDayName)
+
+      // Calculate next sun position for interpolation
+      const nextSunPositionData = this.calculateSunViewportPosition(
+        transitionInfo.nextTimeOfDayName,
+        sunPosition,
+      )
+
+      // For transitions between gradient types, prefer the current type
+      const finalGradientType = useRadialGradient ? 'radial' : 'linear'
+      const finalGradientCenter = useRadialGradient
+        ? sunPositionData.sunViewportPosition
+        : undefined
+      const finalGradientRadius = useRadialGradient ? 2.5 : undefined // Increased radius to cover viewport from off-screen positions
+
       return {
         gradientColors: this.interpolateGradientColors(
           currentGradientColors,
@@ -292,12 +315,218 @@ const skyGradientCalculator = {
           nextCloudColors.cloudShadowColor,
           transitionInfo.progress,
         ),
+        sunViewportPosition: {
+          x:
+            sunPositionData.sunViewportPosition.x +
+            (nextSunPositionData.sunViewportPosition.x - sunPositionData.sunViewportPosition.x) *
+              transitionInfo.progress,
+          y:
+            sunPositionData.sunViewportPosition.y +
+            (nextSunPositionData.sunViewportPosition.y - sunPositionData.sunViewportPosition.y) *
+              transitionInfo.progress,
+        },
+        lightDirection: {
+          x:
+            sunPositionData.lightDirection.x +
+            (nextSunPositionData.lightDirection.x - sunPositionData.lightDirection.x) *
+              transitionInfo.progress,
+          y:
+            sunPositionData.lightDirection.y +
+            (nextSunPositionData.lightDirection.y - sunPositionData.lightDirection.y) *
+              transitionInfo.progress,
+        },
+        gradientType: finalGradientType,
+        radialGradientCenter: finalGradientCenter,
+        radialGradientRadius: finalGradientRadius,
       }
     }
+
     return {
       gradientColors: currentGradientColors,
       sunColor: currentSunColor,
       ...currentCloudColors,
+      sunViewportPosition: sunPositionData.sunViewportPosition,
+      lightDirection: sunPositionData.lightDirection,
+      gradientType: useRadialGradient ? 'radial' : 'linear',
+      radialGradientCenter: useRadialGradient ? sunPositionData.sunViewportPosition : undefined,
+      radialGradientRadius: useRadialGradient ? 2.5 : undefined,
+    }
+  },
+
+  // Calculate sun position in viewport coordinates (0-1) based on time of day
+  calculateSunViewportPosition(
+    timeOfDay: TimeOfDay,
+    sunPosition: SunPosition,
+  ): {
+    sunViewportPosition: { x: number; y: number }
+    lightDirection: { x: number; y: number }
+  } {
+    let sunX = 0.5 // Default to center
+    let sunY = 0.5 // Default to center
+
+    switch (timeOfDay) {
+      case 'dawn':
+      case 'sunrise':
+      case 'morning':
+        // Dawn/early morning sun positioned off-screen to the right
+        sunX = 1.5 // Well outside right edge
+        sunY = 0.3 // Slightly above center
+        break
+
+      case 'solar_noon_transition':
+      case 'solar_noon':
+        // Midday sun positioned off-screen above
+        sunX = 0.5 // Center horizontally
+        sunY = -0.5 // Well above top edge
+        break
+
+      case 'afternoon':
+      case 'evening_transition':
+      case 'sunset':
+        // Early evening sun positioned off-screen to the left
+        sunX = -0.5 // Well outside left edge
+        sunY = 0.3 // Slightly above center
+        break
+
+      case 'dusk':
+      case 'night_after_dusk':
+      case 'deep_night':
+      case 'night_before_dawn':
+        // Post-dusk sun doesn't exist - position far below viewport
+        sunX = 0.5
+        sunY = 2.0 // Well below viewport
+        break
+
+      default:
+        // Interpolate for other times
+        // Use sun azimuth and altitude for more precise positioning
+        if (sunPosition.altitude > 0) {
+          // Sun is above horizon
+          // Convert azimuth (0-360°) to viewport X (0-1)
+          // Azimuth 0° = North, 90° = East, 180° = South, 270° = West
+          // We want East (dawn) = right (1.5), West (sunset) = left (-0.5)
+          const azimuthRad = sunPosition.azimuth
+          const azimuthDeg = (azimuthRad * 180) / Math.PI
+
+          // Map azimuth to viewport X: East (90°) -> 1.5, West (270°) -> -0.5
+          if (azimuthDeg >= 0 && azimuthDeg <= 180) {
+            // Morning to afternoon (East to South to West)
+            sunX = 1.5 - (azimuthDeg / 180) * 2.0 // 1.5 to -0.5
+          } else {
+            // Evening to night to morning (West to North to East)
+            sunX = -0.5 + ((360 - azimuthDeg) / 180) * 2.0 // -0.5 to 1.5
+          }
+
+          // Map altitude to viewport Y: higher altitude = further above viewport
+          const altitudeDeg = (sunPosition.altitude * 180) / Math.PI
+          // For high sun (90°), position well above viewport (-0.5)
+          // For low sun (0°), position at horizon level (1.0)
+          sunY = 1.0 - (altitudeDeg / 90) * 1.5 // 1.0 to -0.5 for 0° to 90°
+        } else {
+          // Sun is below horizon
+          sunX = 0.5
+          sunY = 2.0
+        }
+        break
+    }
+
+    // Calculate light direction vector from sun position to center of viewport
+    // Light comes FROM the sun TO the clouds
+    const centerX = 0.5
+    const centerY = 0.5
+    const lightDirX = centerX - sunX
+    const lightDirY = centerY - sunY
+
+    // Normalize the light direction vector
+    const length = Math.sqrt(lightDirX * lightDirX + lightDirY * lightDirY)
+    const normalizedLightDir =
+      length > 0
+        ? {
+            x: lightDirX / length,
+            y: lightDirY / length,
+          }
+        : { x: 0, y: 0 }
+
+    return {
+      sunViewportPosition: { x: sunX, y: sunY },
+      lightDirection: normalizedLightDir,
+    }
+  },
+
+  // Generate radial gradient colors based on sun position
+  getRadialGradientColorsForTimeOfDay(timeOfDay: TimeOfDay): [number, number, number][] {
+    switch (timeOfDay) {
+      case 'dawn':
+        return [
+          [0.8, 0.4, 0.3], // Warm orange-red at sun center
+          [0.6, 0.3, 0.4], // Purple-pink
+          [0.3, 0.15, 0.35], // Deep purple
+          [0.15, 0.1, 0.25], // Dark purple at edges
+        ]
+      case 'sunrise':
+        return [
+          [1.0, 0.8, 0.3], // Bright golden yellow at sun
+          [0.95, 0.6, 0.2], // Orange
+          [0.7, 0.35, 0.35], // Reddish
+          [0.5, 0.25, 0.4], // Purple at edges
+        ]
+      case 'morning':
+        return [
+          [1.0, 1.0, 0.95], // Bright white-yellow at sun
+          [0.8, 0.9, 1.0], // Light blue
+          [0.65, 0.8, 0.98], // Medium blue
+          [0.5, 0.7, 0.95], // Deeper blue at edges
+        ]
+      case 'solar_noon_transition':
+      case 'solar_noon':
+        return [
+          [1.0, 1.0, 0.95], // Same as morning - bright white-yellow at sun
+          [0.8, 0.9, 1.0], // Light blue
+          [0.65, 0.8, 0.98], // Medium blue
+          [0.5, 0.7, 0.95], // Deeper blue at edges
+        ]
+      case 'afternoon':
+        return [
+          [1.0, 1.0, 0.95], // Same as morning - bright white-yellow at sun
+          [0.8, 0.9, 1.0], // Light blue
+          [0.65, 0.8, 0.98], // Medium blue
+          [0.5, 0.7, 0.95], // Deeper blue at edges
+        ]
+      case 'evening_transition':
+        return [
+          [1.0, 0.9, 0.7], // Warm yellow at sun
+          [0.9, 0.8, 0.8], // Warm gray
+          [0.8, 0.82, 0.85], // Cool gray
+          [0.5, 0.65, 0.9], // Blue at edges
+        ]
+      case 'sunset':
+        return [
+          [1.0, 0.75, 0.25], // Bright orange at sun
+          [0.9, 0.6, 0.35], // Orange-red
+          [0.7, 0.45, 0.5], // Purple-pink
+          [0.45, 0.3, 0.55], // Deep purple at edges
+        ]
+      default:
+        // Fallback to morning colors
+        return [
+          [1.0, 1.0, 0.95],
+          [0.8, 0.9, 1.0],
+          [0.65, 0.8, 0.98],
+          [0.5, 0.7, 0.95],
+        ]
+    }
+  },
+
+  // Determine if we should use radial gradient based on time of day
+  shouldUseRadialGradient(timeOfDay: TimeOfDay): boolean {
+    switch (timeOfDay) {
+      case 'deep_night':
+      case 'night_before_dawn':
+      case 'night_after_dusk':
+      case 'dusk':
+        return false // Use linear gradient for night
+      default:
+        return true // Use radial gradient for day
     }
   },
 }

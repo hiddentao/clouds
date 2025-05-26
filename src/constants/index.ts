@@ -4,8 +4,8 @@ export const CANVAS_CONFIG = {
 } as const
 
 export const CLOUD_CONFIG = {
-  MIN_CLOUDS: 20,
-  MAX_CLOUDS: 40,
+  MIN_CLOUDS: 10,
+  MAX_CLOUDS: 30,
   MIN_SCALE: 0.3,
   MAX_SCALE: 2.0,
   SPEED_MIN: 0.01,
@@ -15,9 +15,9 @@ export const CLOUD_CONFIG = {
 } as const
 
 export const DEPTH_CONFIG = {
-  DEFAULT_LAYERS: 30,
+  DEFAULT_LAYERS: 5,
   MIN_LAYERS: 3,
-  MAX_LAYERS: 50,
+  MAX_LAYERS: 20,
   SLICE_OVERLAP_FACTOR: 0.3,
   CONSTRAINED_CLOUD_PERCENTAGE: 0.75,
   DEPTH_MULTIPLIER_BASE: 0.6, // base multiplier for layer distribution
@@ -65,16 +65,19 @@ export const generateDepthLayers = (numLayers: number) => {
     const fullStart = 0.5 + depth * 0.25 // Furthest start at 0.5, closest start at 0.75
     const fullEnd = 0.75 + depth * 0.25 // Furthest end at 0.75, closest end at 1.0
 
+    // Reverse scale logic: front layers (depth=1) have smaller clouds, back layers (depth=0) have larger clouds
+    const inverseDepth = 1 - depth // 1 for back layers, 0 for front layers
+
     layers[layerKey] = {
       depth,
       speedMultiplier: 0.1 + depth * 1.4,
       scaleRange: {
-        min: 0.3 + depth * 0.5,
-        max: 0.6 + depth * 1.0,
+        min: 0.4 + inverseDepth * 0.6, // Front: 0.4-0.5, Back: 1.0-1.1
+        max: 0.5 + inverseDepth * 0.6, // Front: 0.5, Back: 1.1
       },
       alphaRange: {
-        min: 0.2 + depth * 0.5,
-        max: 0.4 + depth * 0.6,
+        min: 0.3 + depth * 0.4, // Front: 0.7, Back: 0.3
+        max: 0.5 + depth * 0.4, // Front: 0.9, Back: 0.5
       },
       yRange: {
         min: fullStart,

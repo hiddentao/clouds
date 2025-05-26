@@ -3,6 +3,11 @@
   top: 20px;
   right: 20px;
   z-index: 1000;
+  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.sidebar.collapsed {
+  transform: translateX(calc(100% + 20px));
 }
 
 .sidebar-content {
@@ -13,6 +18,38 @@
 
 .sidebar-section {
   /* No margin needed since we're using gap */
+}
+
+.collapse-button {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.95);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
+  color: #333;
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  transition: all 0.2s ease;
+  z-index: 1001;
+}
+
+.collapse-button:hover {
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.4);
+  transform: scale(1.05);
+}
+
+.collapse-button:active {
+  transform: scale(0.95);
 }
 
 .slider-control {

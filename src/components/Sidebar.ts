@@ -11,10 +11,12 @@ export interface CloudSettings {
 export class Sidebar {
   private container: HTMLElement
   private content!: HTMLElement
+  private collapseButton!: HTMLButtonElement
   private timeControlWidget: TimeControlWidget
   private onCloudSettingsChange: (settings: CloudSettings) => void
   private cloudSettings: CloudSettings
   private debounceTimer: number | null = null
+  private isCollapsed = true
 
   constructor(
     onTimeChange: (time: Date) => void,
@@ -26,6 +28,9 @@ export class Sidebar {
     this.container = this.createSidebar()
     this.timeControlWidget = new TimeControlWidget(onTimeChange)
     this.setupContent()
+    this.setupCollapseButton()
+
+    this.container.classList.add('collapsed')
   }
 
   private createSidebar(): HTMLElement {
@@ -38,6 +43,33 @@ export class Sidebar {
     sidebar.appendChild(this.content)
 
     return sidebar
+  }
+
+  private setupCollapseButton(): void {
+    this.collapseButton = document.createElement('button')
+    this.collapseButton.className = 'collapse-button'
+    this.collapseButton.innerHTML = '<'
+    this.collapseButton.title = 'Expand sidebar'
+
+    this.collapseButton.addEventListener('click', () => {
+      this.toggleCollapse()
+    })
+
+    document.body.appendChild(this.collapseButton)
+  }
+
+  private toggleCollapse(): void {
+    this.isCollapsed = !this.isCollapsed
+
+    if (this.isCollapsed) {
+      this.container.classList.add('collapsed')
+      this.collapseButton.innerHTML = '<'
+      this.collapseButton.title = 'Expand sidebar'
+    } else {
+      this.container.classList.remove('collapsed')
+      this.collapseButton.innerHTML = '×'
+      this.collapseButton.title = 'Collapse sidebar'
+    }
   }
 
   private setupContent(): void {
@@ -164,5 +196,8 @@ export class Sidebar {
     }
     this.timeControlWidget.destroy()
     this.container.remove()
+
+    // Remove the collapse button from document body
+    this.collapseButton?.parentNode?.removeChild(this.collapseButton)
   }
 }

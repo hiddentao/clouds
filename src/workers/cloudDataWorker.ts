@@ -43,60 +43,42 @@ function _calculatePixelColorLogic(
   }, // alpha is optional as it's not used for color calculation itself
   skyGradient: SkyGradient | null,
 ): number {
-  const { isEdge, edgeDistance, shadowFactor, brightness } = pixelInfo
+  const { isEdge, edgeDistance, brightness, shadowFactor } = pixelInfo
   if (skyGradient) {
-    const baseColor = skyGradient.cloudBaseColor
-    const highlightColor = skyGradient.cloudHighlightColor
-    const shadowColor = skyGradient.cloudShadowColor
+    // Determine if this is a daytime period where we need off-white clouds for visibility
+    const isDaytime = skyGradient.gradientType === 'radial' // Radial gradients are used for daytime
+
+    // Use off-white base color for daytime, pure white for other times
     let finalColor: [number, number, number]
-
-    if (isEdge || edgeDistance < 0.1) {
-      // Edge pixels get more highlight mixing for softer edges
-      const mixFactor = brightness * 0.8 + 0.2
-      finalColor = [
-        baseColor[0] * (1 - mixFactor) + highlightColor[0] * mixFactor,
-        baseColor[1] * (1 - mixFactor) + highlightColor[1] * mixFactor,
-        baseColor[2] * (1 - mixFactor) + highlightColor[2] * mixFactor,
-      ]
+    if (isDaytime) {
+      // Off-white with slight warm tint for better visibility against blue sky
+      finalColor = [0.95, 0.95, 0.92] // Slightly warm off-white
     } else {
-      // Start with base color for interior pixels
-      finalColor = [...baseColor] as [number, number, number]
-
-      // Apply shadows more strongly for negative shadow factors (bottom/shadowed areas)
-      const shadowMix = Math.max(0, -shadowFactor)
-      const lightMix = Math.max(0, shadowFactor)
-
-      if (shadowMix > 0) {
-        // Increase shadow strength for more pronounced bottom shadows
-        const strength = shadowMix * 0.8
-        finalColor = [
-          finalColor[0] * (1 - strength) + shadowColor[0] * strength,
-          finalColor[1] * (1 - strength) + shadowColor[1] * strength,
-          finalColor[2] * (1 - strength) + shadowColor[2] * strength,
-        ]
-      }
-
-      if (lightMix > 0) {
-        // Reduce highlight strength to keep clouds more white-based
-        const strength = lightMix * 0.3
-        finalColor = [
-          finalColor[0] * (1 - strength) + highlightColor[0] * strength,
-          finalColor[1] * (1 - strength) + highlightColor[1] * strength,
-          finalColor[2] * (1 - strength) + highlightColor[2] * strength,
-        ]
-      }
+      // Pure white for dawn, dusk, and night periods
+      finalColor = [1.0, 1.0, 1.0]
     }
 
-    // Apply brightness with more subtle effect to preserve white appearance
+    // Apply brightness variation but keep it subtle for sharper edges
+    const brightnessVariation = 0.8 + brightness * 0.2 // Reduced variation for sharper look
     finalColor = [
-      Math.min(1.0, finalColor[0] * (0.7 + brightness * 0.3)),
-      Math.min(1.0, finalColor[1] * (0.7 + brightness * 0.3)),
-      Math.min(1.0, finalColor[2] * (0.7 + brightness * 0.3)),
+      Math.min(1.0, finalColor[0] * brightnessVariation),
+      Math.min(1.0, finalColor[1] * brightnessVariation),
+      Math.min(1.0, finalColor[2] * brightnessVariation),
     ]
 
-    const r = Math.round(finalColor[0] * 255)
-    const g = Math.round(finalColor[1] * 255)
-    const b = Math.round(finalColor[2] * 255)
+    // Apply shadow factor to create contrast
+    // Shadow factor ranges from 0 (full shadow) to 1 (no shadow)
+    // For better contrast, we'll darken shadowed areas more significantly
+    const shadowMultiplier = 0.3 + shadowFactor * 0.7 // Range from 0.3 to 1.0
+    finalColor = [
+      finalColor[0] * shadowMultiplier,
+      finalColor[1] * shadowMultiplier,
+      finalColor[2] * shadowMultiplier,
+    ]
+
+    const r = Math.round(Math.min(255, finalColor[0] * 255))
+    const g = Math.round(Math.min(255, finalColor[1] * 255))
+    const b = Math.round(Math.min(255, finalColor[2] * 255))
     return (r << 16) | (g << 8) | b
   }
   const gray = Math.floor(brightness * 255)
@@ -168,101 +150,95 @@ function _calculateCloudDensity(
   fragmentData: CloudFragmentData,
   pNoise: PerlinNoise,
 ): number {
-  let dens = 0
-  const turbulenceScale = 1.0 + fragmentData.turbulence
-  const complexityFactor = fragmentData.shapeComplexity
+  // Create semi-oval shape with compressed bottom
+  const centerDistance = Math.sqrt(nxLocal * nxLocal + nyLocal * nyLocal)
 
+  // Apply vertical compression to create flattened bottom
+  const verticalCompressionFactor = nyLocal > 0 ? 1.5 : 0.8 // Compress bottom more than top
+  const adjustedNy = nyLocal * verticalCompressionFactor
+  const adjustedDistance = Math.sqrt(nxLocal * nxLocal + adjustedNy * adjustedNy)
+
+  // Create base cloud shape with semi-oval profile
+  let baseDensity = Math.max(0, 1.0 - adjustedDistance * 0.7)
+
+  // Add additional bottom compression for more natural cloud base
+  if (nyLocal > 0) {
+    const bottomCompressionFactor = 1.0 - nyLocal * 0.3 // Gradually reduce density toward bottom
+    baseDensity *= bottomCompressionFactor
+  }
+
+  // Add primary noise layer for organic shape
+  const primaryScale = 3.0 + fragmentData.shapeComplexity * 2.0
+  const primaryNoise = pNoise.noise(
+    nxLocal * primaryScale + fragmentData.noiseOffset * 0.01,
+    nyLocal * primaryScale + fragmentData.noiseOffset * 0.01,
+  )
+  baseDensity *= 0.7 + (primaryNoise + 1) * 0.15 // Normalize noise to 0.7-1.0 range
+
+  // Add secondary detail layer
+  const detailScale = primaryScale * 3.0
+  const detailNoise = pNoise.noise(
+    nxLocal * detailScale + fragmentData.noiseOffset * 0.02,
+    nyLocal * detailScale + fragmentData.noiseOffset * 0.02,
+  )
+  baseDensity += detailNoise * 0.1 // Subtle detail
+
+  // Apply type-specific modifications with semi-oval consideration
   switch (fragmentData.type) {
     case 'wispy': {
-      const stretchFactor = 1.0 + Math.abs(nxLocal) * (0.4 * complexityFactor)
-      const verticalFalloff = Math.max(0, 1.0 - Math.abs(nyLocal) * (2.0 * turbulenceScale))
-      const tendrilOffset1 = _simpleRandom(fragmentData.noiseOffset + 100) * 0.4 - 0.2
-      const tendrilOffset2 = _simpleRandom(fragmentData.noiseOffset + 200) * 0.4 - 0.2
-      const tendrilOffset3 = _simpleRandom(fragmentData.noiseOffset + 300) * 0.4 - 0.2
-      const t1 =
-        Math.max(0, 1.0 - Math.abs(nyLocal + 0.3 + tendrilOffset1) * (3.0 * turbulenceScale)) *
-        Math.max(0, 1.0 - Math.abs(nxLocal) * (0.8 * complexityFactor))
-      const t2 =
-        Math.max(0, 1.0 - Math.abs(nyLocal - 0.2 + tendrilOffset2) * (4.0 * turbulenceScale)) *
-        Math.max(0, 1.0 - Math.abs(nxLocal + 0.3) * (1.2 * complexityFactor))
-      const t3 =
-        Math.max(0, 1.0 - Math.abs(nyLocal + tendrilOffset3) * (2.5 * turbulenceScale)) *
-        Math.max(0, 1.0 - Math.abs(nxLocal - 0.4) * (1.0 * complexityFactor))
-      dens = Math.max(t1, t2, t3) * stretchFactor * verticalFalloff
+      // Enhance horizontal streaking with bottom compression
+      const horizontalFactor = 1.0 + Math.abs(Math.sin(nyLocal * 6)) * 0.4
+      const verticalFactor = 0.6 + Math.abs(Math.cos(nxLocal * 3)) * 0.4
+      // Apply stronger compression for wispy clouds at bottom
+      const wispyBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.4 : 1.0
+      baseDensity *= horizontalFactor * verticalFactor * wispyBottomFactor
       break
     }
+
     case 'puffy': {
-      const numMasses = Math.floor(3 + complexityFactor * 4)
-      for (let i = 0; i < numMasses; i++) {
-        const offsetX =
-          _simpleRandom(fragmentData.noiseOffset + i * 10) * (0.6 * turbulenceScale) -
-          0.3 * turbulenceScale
-        const offsetY =
-          _simpleRandom(fragmentData.noiseOffset + i * 20) * (0.4 * turbulenceScale) -
-          0.2 * turbulenceScale
-        const massRadius =
-          (0.25 + _simpleRandom(fragmentData.noiseOffset + i * 30) * 0.35) * complexityFactor
-        const distance = Math.sqrt((nxLocal - offsetX) ** 2 + (nyLocal - offsetY) ** 2)
-        const massDensity = Math.max(0, 1.0 - distance / massRadius)
-        dens = Math.max(dens, massDensity ** (1.2 / turbulenceScale))
-      }
+      // Enhance rounded characteristics but maintain flat bottom
+      const puffiness = Math.max(0, 1.0 - centerDistance * 0.4) ** 0.8
+      // Reduce puffiness at bottom to maintain flat base
+      const puffyBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.2 : 1.0
+      baseDensity *= (0.8 + puffiness * 0.3) * puffyBottomFactor
       break
     }
-    case 'scattered': {
-      const numPatches = Math.floor(4 + complexityFactor * 6)
-      for (let i = 0; i < numPatches; i++) {
-        const offsetX =
-          _simpleRandom(fragmentData.noiseOffset + i * 15) * (1.6 * turbulenceScale) -
-          0.8 * turbulenceScale
-        const offsetY =
-          _simpleRandom(fragmentData.noiseOffset + i * 25) * (1.0 * turbulenceScale) -
-          0.5 * turbulenceScale
-        const patchSize =
-          (0.15 + _simpleRandom(fragmentData.noiseOffset + i * 35) * 0.3) * complexityFactor
-        const distance = Math.sqrt((nxLocal - offsetX) ** 2 + (nyLocal - offsetY) ** 2)
-        if (distance < patchSize) {
-          const patchDensity = Math.max(0, 1.0 - distance / patchSize)
-          dens = Math.max(dens, patchDensity * turbulenceScale)
-        }
-      }
-      break
-    }
+
     case 'dense': {
-      const centerDistance = Math.sqrt(nxLocal ** 2 + nyLocal ** 2)
-      const baseDensity = Math.max(0, 1.0 - centerDistance * (0.6 * turbulenceScale))
-      const numBulges = Math.floor(2 + complexityFactor * 3)
-      let maxBulgeDensity = 0
-      for (let i = 0; i < numBulges; i++) {
-        const bulgeX = _simpleRandom(fragmentData.noiseOffset + i * 40) * 0.6 - 0.3
-        const bulgeY = _simpleRandom(fragmentData.noiseOffset + i * 50) * 0.4 - 0.2
-        const bulgeSize =
-          0.8 + _simpleRandom(fragmentData.noiseOffset + i * 60) * (0.6 * complexityFactor)
-        const bulgeStrength = 0.7 + _simpleRandom(fragmentData.noiseOffset + i * 70) * 0.2
-        const bulgeDensity = Math.max(
-          0,
-          1.0 - Math.sqrt((nxLocal - bulgeX) ** 2 + (nyLocal - bulgeY) ** 2) * bulgeSize,
-        )
-        maxBulgeDensity = Math.max(maxBulgeDensity, bulgeDensity * bulgeStrength)
+      // More solid structure with flat bottom
+      const solidness = Math.max(0, 1.0 - centerDistance * 0.5) ** 0.6
+      // Maintain density but compress bottom
+      const denseBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.15 : 1.0
+      baseDensity *= (0.9 + solidness * 0.2) * denseBottomFactor
+      break
+    }
+
+    case 'scattered': {
+      // Create gaps but maintain semi-oval shape
+      const fragmentNoise = _simpleRandom(fragmentData.noiseOffset + nxLocal * 200 + nyLocal * 300)
+      if (fragmentNoise < 0.3) {
+        baseDensity *= 0.2 // Create gaps
       }
-      dens = Math.max(baseDensity, maxBulgeDensity)
+      // Apply bottom compression for scattered clouds too
+      const scatteredBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.25 : 1.0
+      baseDensity *= scatteredBottomFactor
       break
     }
   }
 
-  const noiseValScale = 2.5 + turbulenceScale * 1.5
-  const noiseXVal = nxLocal * noiseValScale + fragmentData.noiseOffset * 0.01
-  const noiseYVal = nyLocal * noiseValScale + fragmentData.noiseOffset * 0.01
-  let noiseIntensity: number
-  if (fragmentData.type === 'dense') {
-    noiseIntensity = 0.05 + fragmentData.turbulence * 0.03
-  } else if (fragmentData.type === 'puffy') {
-    noiseIntensity = 0.08 + fragmentData.turbulence * 0.05
-  } else {
-    noiseIntensity = 0.15 + fragmentData.turbulence * 0.1
+  // Apply edge erosion for organic boundaries with semi-oval shape
+  const edgeNoise = pNoise.noise(
+    nxLocal * 8.0 + fragmentData.noiseOffset * 0.03,
+    nyLocal * 8.0 + fragmentData.noiseOffset * 0.03,
+  )
+
+  if (adjustedDistance > 0.6) {
+    // Apply erosion to edges, considering the semi-oval shape
+    const edgeFactor = 1.0 - (adjustedDistance - 0.6) / 0.4
+    baseDensity *= edgeFactor * (0.8 + edgeNoise * 0.3)
   }
-  const organicNoiseVal = pNoise.noise(noiseXVal, noiseYVal) * noiseIntensity
-  dens += organicNoiseVal
-  return Math.max(0, Math.min(1, dens * fragmentData.density))
+
+  return Math.max(0, Math.min(1, baseDensity * fragmentData.density))
 }
 
 function _calculateOrganicBoundary(
@@ -271,44 +247,24 @@ function _calculateOrganicBoundary(
   fragmentData: CloudFragmentData,
   pNoise: PerlinNoise,
 ): number {
-  let boundary = 1.0
-  switch (fragmentData.type) {
-    case 'wispy': {
-      const horizontalStretch = 1.0 + Math.abs(nxLocal) * 0.3
-      const verticalCompress = 0.4 + Math.abs(nyLocal) * 0.2
-      boundary = horizontalStretch * verticalCompress
-      const tendrilNoise =
-        pNoise.noise(nxLocal * 3 + fragmentData.noiseOffset * 0.01, nyLocal * 4) * 0.3
-      boundary += tendrilNoise
-      break
-    }
-    case 'puffy': {
-      const angle = Math.atan2(nyLocal, nxLocal)
-      const radialNoise = pNoise.noise(angle * 2 + fragmentData.noiseOffset * 0.01, 0) * 0.2
-      boundary = 0.9 + radialNoise
-      const bulgeFactor = Math.sin(angle * 3 + fragmentData.noiseOffset * 0.02) * 0.15
-      boundary += bulgeFactor
-      break
-    }
-    case 'dense': {
-      const angle = Math.atan2(nyLocal, nxLocal)
-      const solidNoise = pNoise.noise(angle * 1.5 + fragmentData.noiseOffset * 0.01, 0) * 0.1
-      boundary = 0.95 + solidNoise
-      break
-    }
-    case 'scattered': {
-      const patchNoise =
-        pNoise.noise(nxLocal * 4 + fragmentData.noiseOffset * 0.01, nyLocal * 4) * 0.4
-      const baseNoise = pNoise.noise(nxLocal * 2, nyLocal * 2) * 0.2
-      boundary = 0.7 + patchNoise + baseNoise
-      break
-    }
+  // Apply the same vertical compression as in density calculation
+  const verticalCompressionFactor = nyLocal > 0 ? 1.5 : 0.8
+  const adjustedNy = nyLocal * verticalCompressionFactor
+
+  // Calculate boundary based on compressed coordinates
+  const angle = Math.atan2(adjustedNy, nxLocal)
+  const irregularity = Math.sin(angle * 6) * 0.1 + Math.cos(angle * 8) * 0.05
+  let boundary = 1.0 + irregularity
+
+  // Apply additional bottom compression to boundary
+  if (nyLocal > 0) {
+    const bottomBoundaryFactor = 1.0 - nyLocal * 0.2 // Compress boundary at bottom
+    boundary *= bottomBoundaryFactor
   }
-  const organicNoiseVal =
-    pNoise.noise(nxLocal * 2.5 + fragmentData.noiseOffset * 0.005, nyLocal * 2.5) * 0.1
-  boundary += organicNoiseVal
-  boundary *= 1.0 - fragmentData.edgeSoftness * 0.3
-  return Math.max(0.3, Math.min(1.2, boundary))
+
+  // Apply edge softness
+  boundary *= 1.0 - fragmentData.edgeSoftness * 0.2
+  return Math.max(0.6, Math.min(1.3, boundary))
 }
 
 // --- Comlink Exposed Object ---
@@ -373,7 +329,7 @@ const cloudDataGenerator = {
       layers: numLayersForType,
       turbulence: _simpleRandom(noiseOffset + 7) * 0.8,
       shapeComplexity: _simpleRandom(noiseOffset + 8) * 1.0 + 0.1,
-      edgeSoftness: _simpleRandom(noiseOffset + 9) * 0.6 + 0.1,
+      edgeSoftness: _simpleRandom(noiseOffset + 9) * 0.2 + 0.05,
       rotation: 0,
       rotationSpeed: 0,
       depth: layerConfig.depth,
@@ -386,33 +342,47 @@ const cloudDataGenerator = {
     const pixelSize = 8
     const gridWidth = Math.ceil(fragmentData.width / pixelSize)
     const gridHeight = Math.ceil(fragmentData.height / pixelSize)
-    const lightDir = { x: -0.2, y: -0.8 }
-    const densityThreshold =
-      fragmentData.type === 'dense' || fragmentData.type === 'puffy' ? 0.05 : 0.1
+
+    // Limit grid size to prevent OOM during initial generation
+    const MAX_GRID_SIZE = 100 // Maximum 100x100 grid
+    const actualGridWidth = Math.min(gridWidth, MAX_GRID_SIZE)
+    const actualGridHeight = Math.min(gridHeight, MAX_GRID_SIZE)
+
+    // Adjust pixel size if we had to limit the grid
+    const adjustedPixelSizeX = fragmentData.width / actualGridWidth
+    const adjustedPixelSizeY = fragmentData.height / actualGridHeight
+    const adjustedPixelSize = Math.max(adjustedPixelSizeX, adjustedPixelSizeY)
+
+    // Use dynamic light direction from sky gradient, fallback to default
+    const lightDir = initialSkyGradient?.lightDirection || { x: -0.2, y: -0.8 }
     const centerX = fragmentData.width / 2
     const centerY = fragmentData.height / 2
 
     const densityMemo: Map<string, number> = new Map()
     const getMemoizedDensity = (nxLocal: number, nyLocal: number): number => {
-      const key = `${nxLocal.toFixed(5)},${nyLocal.toFixed(5)}`
+      const key = `${nxLocal.toFixed(3)},${nyLocal.toFixed(3)}` // Reduced precision for memory efficiency
       if (densityMemo.has(key)) return densityMemo.get(key) as number
       const calculatedDensity = _calculateCloudDensity(nxLocal, nyLocal, fragmentData, perlin)
       densityMemo.set(key, calculatedDensity)
       return calculatedDensity
     }
 
-    for (let y = 0; y < gridHeight; y++) {
-      for (let x = 0; x < gridWidth; x++) {
-        const nx = (x / gridWidth) * 2 - 1
-        const ny = (y / gridHeight) * 2 - 1
+    for (let y = 0; y < actualGridHeight; y++) {
+      for (let x = 0; x < actualGridWidth; x++) {
+        const nx = (x / actualGridWidth) * 2 - 1
+        const ny = (y / actualGridHeight) * 2 - 1
         const densityValue = getMemoizedDensity(nx, ny)
+
+        // Use a reasonable threshold to capture cloud pixels
+        const densityThreshold = 0.1
 
         if (densityValue > densityThreshold) {
           const distanceFromCenter = Math.sqrt(nx * nx + ny * ny)
           const organicBoundary = _calculateOrganicBoundary(nx, ny, fragmentData, perlin)
 
           if (distanceFromCenter <= organicBoundary) {
-            const step = 2 / gridWidth
+            // Simplified edge detection
+            const step = 2 / actualGridWidth
             const neighborDensities = [
               getMemoizedDensity(nx, ny - step),
               getMemoizedDensity(nx, ny + step),
@@ -421,39 +391,64 @@ const cloudDataGenerator = {
             ]
             const avgNeighbor =
               neighborDensities.reduce((s, n) => s + n, 0) / neighborDensities.length
-            const isEdge =
-              fragmentData.type === 'dense' || fragmentData.type === 'puffy'
-                ? densityValue < avgNeighbor * 0.4 || densityValue < 0.2
-                : densityValue < avgNeighbor * 0.7 || densityValue < 0.4
+            const densityGradient = Math.abs(densityValue - avgNeighbor)
 
-            // Enhanced shadow calculation for bottom edges
-            const baseShadowFactor = (nx * lightDir.x + ny * lightDir.y) * 0.4
-            // Add extra shadow for lower parts of the cloud (positive ny values)
-            const bottomShadowBoost = Math.max(0, ny * 0.3) // 0 to 0.3 boost for bottom half
-            const shadowFactor = baseShadowFactor - bottomShadowBoost
+            // Simple edge detection
+            const isEdge = densityGradient > 0.15 || densityValue < 0.4
 
-            let currentAlpha = densityValue
-            let currentBrightness = 0.8
-            const edgeDistance = organicBoundary - distanceFromCenter
-            const edgeSoftness = Math.min(1.0, edgeDistance * 3.0)
+            // Calculate shadow factor based on light direction
+            // Light direction comes from the sky gradient
+            const pixelToLightDot = nx * lightDir.x + ny * lightDir.y
+            // Convert dot product to shadow factor (0 = full shadow, 1 = no shadow)
+            // Pixels facing away from light get more shadow
+            const baseShadowFactor = Math.max(0, Math.min(1, (pixelToLightDot + 1) * 0.5))
 
-            if (isEdge || edgeDistance < 0.1) {
-              currentBrightness = 0.9 + densityValue * 0.1
-              currentAlpha *= (0.5 + densityValue * 0.3) * edgeSoftness
-            } else {
-              currentBrightness = 0.6 + densityValue * 0.3
-              currentBrightness += shadowFactor
-              currentAlpha = Math.min(1.0, densityValue * 1.2) * edgeSoftness
+            // Apply additional shadow based on density and edge properties
+            let shadowFactor = baseShadowFactor
+
+            // Denser areas cast more shadows on themselves
+            shadowFactor *= 0.7 + densityValue * 0.3
+
+            // Edge pixels get less shadow to maintain definition
+            if (isEdge) {
+              shadowFactor = Math.max(shadowFactor, 0.6)
             }
-            const texNX = x * 0.3 + fragmentData.noiseOffset * 0.01
-            const texNY = y * 0.3 + fragmentData.noiseOffset * 0.01
-            const texNoise = perlin.noise(texNX, texNY) * 0.05
-            currentBrightness += texNoise
-            currentBrightness = Math.max(0.3, Math.min(1.0, currentBrightness))
-            currentAlpha = Math.max(0.1, Math.min(1.0, currentAlpha))
 
-            const pixelX = (x - gridWidth / 2) * pixelSize + centerX
-            const pixelY = (y - gridHeight / 2) * pixelSize + centerY
+            // Ensure shadow factor stays in valid range
+            shadowFactor = Math.max(0.1, Math.min(1.0, shadowFactor))
+
+            // Use density for alpha with better visibility
+            let currentAlpha = Math.max(0.3, densityValue) // Ensure minimum visibility
+
+            // Apply fuzzy edges but keep them visible
+            if (isEdge) {
+              currentAlpha *= 0.8 // Slight reduction for edges
+            }
+
+            // Apply fragment density
+            currentAlpha *= fragmentData.density
+
+            // Calculate brightness with texture noise
+            let currentBrightness = 0.7 + densityValue * 0.2
+            const edgeDistance = organicBoundary - distanceFromCenter
+
+            // Apply depth-based brightness
+            const depthBrightnessMultiplier = 0.8 + fragmentData.depth * 0.3
+
+            // Add subtle texture noise
+            const texNX = nx * 6.0 + fragmentData.noiseOffset * 0.02
+            const texNY = ny * 6.0 + fragmentData.noiseOffset * 0.02
+            const texNoise = perlin.noise(texNX, texNY) * 0.1
+
+            currentBrightness += texNoise
+            currentBrightness *= depthBrightnessMultiplier
+            currentBrightness = Math.max(0.4, Math.min(1.0, currentBrightness))
+
+            // Ensure good visibility
+            currentAlpha = Math.max(0.2, Math.min(1.0, currentAlpha))
+
+            const pixelX = (x - actualGridWidth / 2) * adjustedPixelSize + centerX
+            const pixelY = (y - actualGridHeight / 2) * adjustedPixelSize + centerY
             const colorInfoForCalc = {
               density: densityValue,
               isEdge,
@@ -478,7 +473,7 @@ const cloudDataGenerator = {
               color: calculatedColor,
               pixelX,
               pixelY,
-              pixelSize,
+              pixelSize: adjustedPixelSize,
             })
           }
         }
@@ -533,7 +528,7 @@ const cloudDataGenerator = {
           density: prop.density,
           isEdge: prop.isEdge,
           edgeDistance: prop.edgeDistance,
-          shadowFactor: prop.shadowFactor,
+          shadowFactor: prop.shadowFactor, // Use existing shadow factor
           brightness: prop.brightness,
         }
         const color = _calculatePixelColorLogic(colorInfo, newSkyGradient)
@@ -555,6 +550,115 @@ const cloudDataGenerator = {
     }
 
     return newColors
+  },
+
+  recalculatePixelColorsAndShadows(
+    pixelProps: PixelProperty[],
+    newSkyGradient: SkyGradient | null,
+    fragmentData: CloudFragmentData,
+  ): { colors: number[]; updatedPixelProps: PixelProperty[] } {
+    // Returns both new colors and updated pixel properties with recalculated shadows
+    const newColors: number[] = []
+    const updatedPixelProps: PixelProperty[] = []
+
+    // Safety check
+    if (!Array.isArray(pixelProps)) {
+      console.error('Worker: pixelProps is not an array:', pixelProps)
+      return { colors: [], updatedPixelProps: [] }
+    }
+
+    // Early return if array is empty (cloud was destroyed)
+    if (pixelProps.length === 0) {
+      console.log('Worker: Received empty pixelProps array, returning empty arrays')
+      return { colors: [], updatedPixelProps: [] }
+    }
+
+    // Get new light direction from sky gradient
+    const lightDir = newSkyGradient?.lightDirection || { x: -0.2, y: -0.8 }
+
+    for (let i = 0; i < pixelProps.length; i++) {
+      const prop = pixelProps[i]
+
+      // Check if the property is valid
+      if (!prop || typeof prop !== 'object') {
+        console.error(`Worker: Invalid pixel property at index ${i}:`, prop)
+        continue // Skip this invalid property
+      }
+
+      // Check if required properties exist
+      if (
+        typeof prop.density !== 'number' ||
+        typeof prop.isEdge !== 'boolean' ||
+        typeof prop.edgeDistance !== 'number' ||
+        typeof prop.nx !== 'number' ||
+        typeof prop.ny !== 'number'
+      ) {
+        console.error(`Worker: Missing or invalid properties at index ${i}:`, prop)
+        continue // Skip this invalid property
+      }
+
+      try {
+        // Calculate shadow factor based on light direction
+        const pixelToLightDot = prop.nx * lightDir.x + prop.ny * lightDir.y
+        // Convert dot product to shadow factor (0 = full shadow, 1 = no shadow)
+        const baseShadowFactor = Math.max(0, Math.min(1, (pixelToLightDot + 1) * 0.5))
+
+        // Apply additional shadow based on density and edge properties
+        let newShadowFactor = baseShadowFactor
+
+        // Denser areas cast more shadows on themselves
+        newShadowFactor *= 0.7 + prop.density * 0.3
+
+        // Edge pixels get less shadow to maintain definition
+        if (prop.isEdge) {
+          newShadowFactor = Math.max(newShadowFactor, 0.6)
+        }
+
+        // Ensure shadow factor stays in valid range
+        newShadowFactor = Math.max(0.1, Math.min(1.0, newShadowFactor))
+
+        // Recalculate brightness with shadow factor
+        const depthBrightnessMultiplier = 0.7 + fragmentData.depth * 0.4
+        let newBrightness: number
+
+        if (prop.isEdge) {
+          newBrightness = (0.7 + prop.density * 0.2) * depthBrightnessMultiplier
+        } else {
+          newBrightness = (0.6 + prop.density * 0.3) * depthBrightnessMultiplier
+        }
+
+        // Apply shadow influence to brightness
+        newBrightness *= 0.8 + newShadowFactor * 0.2 // Shadows reduce brightness slightly
+        newBrightness = Math.max(0.3, Math.min(1.0, newBrightness))
+
+        // Create updated pixel property
+        const updatedProp: PixelProperty = {
+          ...prop,
+          shadowFactor: newShadowFactor,
+          brightness: newBrightness,
+        }
+
+        // Calculate new color with proper shadows
+        const colorInfo = {
+          density: prop.density,
+          isEdge: prop.isEdge,
+          edgeDistance: prop.edgeDistance,
+          shadowFactor: newShadowFactor,
+          brightness: newBrightness,
+        }
+        const color = _calculatePixelColorLogic(colorInfo, newSkyGradient)
+
+        newColors.push(color)
+        updatedPixelProps.push(updatedProp)
+      } catch (error) {
+        console.error(`Worker: Error processing pixel at index ${i}:`, error, prop)
+        // Push defaults as fallback
+        newColors.push(0x808080)
+        updatedPixelProps.push(prop) // Keep original if calculation fails
+      }
+    }
+
+    return { colors: newColors, updatedPixelProps }
   },
 }
 

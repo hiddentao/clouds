@@ -113,6 +113,14 @@ export class CloudFragment {
     const textureNotReady = !this.displayObject.texture || !this.renderTexture
     const needsRedraw = skyGradientChanged || textureNotReady || !this.hasBeenDrawn
 
+    // Check if light direction has changed (requires shadow recalculation)
+    const lightDirectionChanged =
+      skyGradientChanged &&
+      this.skyGradient?.lightDirection &&
+      skyGradient?.lightDirection &&
+      (this.skyGradient.lightDirection.x !== skyGradient.lightDirection.x ||
+        this.skyGradient.lightDirection.y !== skyGradient.lightDirection.y)
+
     if (needsRedraw) {
       this.isUpdatingSkyGradient = true
 
@@ -121,31 +129,71 @@ export class CloudFragment {
         if (skyGradientChanged) {
           this.skyGradient = skyGradient
 
-          const newColors = await this.cloudDataWorker.recalculatePixelColors(
-            this.pixelProperties,
-            this.skyGradient,
-          )
+          // Use shadow recalculation if light direction changed, otherwise just color recalculation
+          if (lightDirectionChanged) {
+            const result = await this.cloudDataWorker.recalculatePixelColorsAndShadows(
+              this.pixelProperties,
+              this.skyGradient,
+              this.data,
+            )
 
-          // Double-check that the cloud hasn't been destroyed while we were waiting for the worker
-          if (this.pixelProperties.length === 0) {
-            return
-          }
+            // Double-check that the cloud hasn't been destroyed while we were waiting for the worker
+            if (this.pixelProperties.length === 0) {
+              return
+            }
 
-          if (newColors.length === this.pixelProperties.length) {
-            for (let i = 0; i < this.pixelProperties.length; i++) {
-              this.pixelProperties[i].color = newColors[i]
+            if (
+              result.colors.length === this.pixelProperties.length &&
+              result.updatedPixelProps.length === this.pixelProperties.length
+            ) {
+              // Update both colors and pixel properties (including shadows)
+              for (let i = 0; i < this.pixelProperties.length; i++) {
+                this.pixelProperties[i] = result.updatedPixelProps[i]
+                this.pixelProperties[i].color = result.colors[i]
+              }
+            } else {
+              console.error('CloudFragment: Mismatch in length of recalculated data.', {
+                colorsLength: result.colors.length,
+                updatedPropsLength: result.updatedPixelProps.length,
+                pixelPropertiesLength: this.pixelProperties.length,
+              })
+              // Fallback: only update what we can
+              const minLength = Math.min(result.colors.length, this.pixelProperties.length)
+              for (let i = 0; i < minLength; i++) {
+                this.pixelProperties[i].color = result.colors[i]
+              }
             }
           } else {
-            console.error('CloudFragment: Mismatch in length of new colors and pixel properties.', {
-              newColorsLength: newColors.length,
-              pixelPropertiesLength: this.pixelProperties.length,
-              pixelProperties: this.pixelProperties,
-              newColors: newColors,
-            })
-            // Fallback: only update colors for the minimum length to avoid crashes
-            const minLength = Math.min(newColors.length, this.pixelProperties.length)
-            for (let i = 0; i < minLength; i++) {
-              this.pixelProperties[i].color = newColors[i]
+            // Just recalculate colors without shadow changes
+            const newColors = await this.cloudDataWorker.recalculatePixelColors(
+              this.pixelProperties,
+              this.skyGradient,
+            )
+
+            // Double-check that the cloud hasn't been destroyed while we were waiting for the worker
+            if (this.pixelProperties.length === 0) {
+              return
+            }
+
+            if (newColors.length === this.pixelProperties.length) {
+              for (let i = 0; i < this.pixelProperties.length; i++) {
+                this.pixelProperties[i].color = newColors[i]
+              }
+            } else {
+              console.error(
+                'CloudFragment: Mismatch in length of new colors and pixel properties.',
+                {
+                  newColorsLength: newColors.length,
+                  pixelPropertiesLength: this.pixelProperties.length,
+                  pixelProperties: this.pixelProperties,
+                  newColors: newColors,
+                },
+              )
+              // Fallback: only update colors for the minimum length to avoid crashes
+              const minLength = Math.min(newColors.length, this.pixelProperties.length)
+              for (let i = 0; i < minLength; i++) {
+                this.pixelProperties[i].color = newColors[i]
+              }
             }
           }
         }
