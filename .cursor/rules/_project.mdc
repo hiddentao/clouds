@@ -4,6 +4,8 @@ globs:
 alwaysApply: true
 ---
 - include rules from [typescript.mdc](mdc:.cursor/rules/typescript.mdc), [biome.json](mdc:biome.json), [bun.mdc](mdc:.cursor/rules/bun.mdc), [husky.mdc](mdc:.cursor/rules/husky.mdc), [pixijs.mdc](mdc:.cursor/rules/pixijs.mdc)
+- do not auto-start the development server to test changes.
+- do not auto-open the browser page.
 
 ## Cloud rendering
 
@@ -24,3 +26,11 @@ To add shadow effects and gradient coloring to pixelated clouds in Pixi.js, enha
 4. **Pixelation**: Apply quantization after shading and coloring to maintain the pixelated look.
 
 This keeps it real-time and GPU-efficient, avoiding OOM issues, while achieving the soft shadows and gradient hues of the clouds.
+
+To render individual fragment clouds of varying shapes and sizes instead of square blocks, modify the algorithm to use a particle-like approach with Perlin noise. We'll generate cloud fragments as separate Pixi.js sprites, each with a unique shape and size, while maintaining the shadow and gradient coloring effects.
+
+Updated Algorithm
+Perlin Noise for Shape: Use Perlin noise to define cloud shapes, but apply it per fragment to create organic outlines.
+Cloud Fragments: Generate multiple sprites (cloud fragments) with varying sizes and shapes, using noise to mask their edges.
+Shadows and Coloring: Apply the same left-sided light source and time-of-day coloring in the shader, but on a per-fragment basis.
+Optimization: Limit the number of fragments and reuse the noise texture to avoid OOM issues.

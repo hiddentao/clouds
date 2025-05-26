@@ -1,81 +1,281 @@
 import * as PIXI from 'pixi.js'
-import { CANVAS_CONFIG, CLOUD_CONFIG, COLORS, SHADER_CONFIG } from '../constants'
-import { Cloud } from '../entities/Cloud'
-import { cloudFragmentShader, cloudVertexShader } from '../shaders/cloudShader'
-import type { ShaderUniforms } from '../types'
+import { TimeControlWidget } from '../components/TimeControlWidget'
+import { CANVAS_CONFIG, CLOUD_CONFIG } from '../constants'
+import { CloudFragment } from '../entities/CloudFragment'
+import type { LocationData, SkyGradient, SunPosition } from '../types'
+import { LocationService } from '../utils/locationService'
+import { SkyGradientService } from '../utils/skyGradientService'
+import { SunCalculator } from '../utils/sunCalculator'
 
 export class CloudscapeRenderer {
   private app: PIXI.Application
-  private clouds: Cloud[] = []
-  private cloudTexture: PIXI.Texture | null = null
-  private cloudShader: PIXI.Filter | null = null
-  private container: PIXI.Container
+  private cloudFragments: CloudFragment[] = []
+  private cloudContainer: PIXI.Container
+  private skyContainer: PIXI.Container
+  private skySprite: PIXI.Sprite | null = null
   private time = 0
+
+  private locationService: LocationService
+  private sunCalculator: SunCalculator
+  private skyGradientService: SkyGradientService
+  private currentLocation: LocationData | null = null
+  private currentSunPosition: SunPosition | null = null
+  private currentSkyGradient: SkyGradient | null = null
+
+  private lastSunUpdate = 0
+  private lastSpawnCheck = 0
+  private readonly SUN_UPDATE_INTERVAL = 60000
+
+  private timeControlWidget: TimeControlWidget
+  private customTime: Date | null = null
 
   constructor(canvas: HTMLCanvasElement) {
     this.app = new PIXI.Application({
       view: canvas,
       width: window.innerWidth,
       height: window.innerHeight,
-      backgroundColor: CANVAS_CONFIG.BACKGROUND_COLOR,
+      backgroundColor: 0x87ceeb, // Sky blue background
       antialias: CANVAS_CONFIG.ANTIALIAS,
       resolution: CANVAS_CONFIG.RESOLUTION,
     })
 
-    this.container = new PIXI.Container()
-    this.app.stage.addChild(this.container)
+    this.skyContainer = new PIXI.Container()
+    this.cloudContainer = new PIXI.Container()
+
+    this.app.stage.addChild(this.skyContainer)
+    this.app.stage.addChild(this.cloudContainer)
+
+    this.locationService = LocationService.getInstance()
+    this.sunCalculator = SunCalculator.getInstance()
+    this.skyGradientService = SkyGradientService.getInstance()
+
+    // Create time control widget
+    this.timeControlWidget = new TimeControlWidget((time: Date) => {
+      this.customTime = time
+      this.updateSunPosition()
+    })
 
     this.initialize()
   }
 
   private async initialize(): Promise<void> {
-    await this.createCloudTexture()
-    this.createCloudShader()
-    this.createClouds()
-    this.setupEventListeners()
-    this.startAnimation()
+    try {
+      this.currentLocation = await this.locationService.getCurrentLocation()
+      this.updateSunPosition()
+      await this.createSkyBackground()
+      this.createClouds()
+      this.setupEventListeners()
+      this.startAnimation()
+
+      // Add time control widget to DOM
+      document.body.appendChild(this.timeControlWidget.getElement())
+    } catch (error) {
+      console.error('Failed to initialize cloudscape:', error)
+      // Fallback initialization without location
+      this.createClouds()
+      this.setupEventListeners()
+      this.startAnimation()
+
+      // Add time control widget to DOM even on error
+      document.body.appendChild(this.timeControlWidget.getElement())
+    }
   }
 
-  private async createCloudTexture(): Promise<void> {
+  private updateSunPosition(): void {
+    if (!this.currentLocation) return
+
+    // Use custom time if available, otherwise use current time
+    const timeToUse = this.customTime || new Date()
+
+    this.currentSunPosition = this.sunCalculator.calculateSunPosition(
+      this.currentLocation,
+      timeToUse,
+    )
+    this.currentSkyGradient = this.skyGradientService.generateSkyGradient(this.currentSunPosition)
+
+    console.log('Sun position updated:', {
+      time: timeToUse.toLocaleTimeString(),
+      timeOfDay: this.currentSunPosition.timeOfDay,
+      altitude: this.currentSunPosition.altitude,
+      azimuth: this.currentSunPosition.azimuth,
+      isDay: this.currentSunPosition.isDay,
+      isDawn: this.currentSunPosition.isDawn,
+      isDusk: this.currentSunPosition.isDusk,
+      isNight: this.currentSunPosition.isNight,
+    })
+
+    this.updateSkyBackground()
+  }
+
+  private async createSkyBackground(): Promise<void> {
+    // Create a smooth multi-color gradient background
     const graphics = new PIXI.Graphics()
-    graphics.beginFill(0xffffff)
-    graphics.drawCircle(0, 0, 100)
-    graphics.endFill()
 
-    this.cloudTexture = this.app.renderer.generateTexture(graphics)
-    graphics.destroy()
-  }
+    if (this.currentSkyGradient) {
+      // Create a smooth vertical gradient with multiple colors
+      const gradientColors = this.currentSkyGradient.gradientColors
 
-  private createCloudShader(): void {
-    const uniforms: ShaderUniforms = {
-      uTime: 0,
-      uResolution: [this.app.screen.width, this.app.screen.height],
-      uNoiseScale: 5.0,
-      uPixelationFactor: SHADER_CONFIG.PIXELATION_FACTOR,
-      uCloudThreshold: SHADER_CONFIG.CLOUD_THRESHOLD,
-      uShadowOffset: SHADER_CONFIG.SHADOW_OFFSET,
-      uShadowIntensity: SHADER_CONFIG.SHADOW_INTENSITY,
-      uGradientStart: COLORS.GRADIENT_START,
-      uGradientEnd: COLORS.GRADIENT_END,
+      const totalStrips = 100 // More strips for smoother transitions
+      const stripHeight = this.app.screen.height / totalStrips
+
+      for (let i = 0; i < totalStrips; i++) {
+        const t = i / (totalStrips - 1) // Interpolation factor (0 to 1)
+
+        // Find which color segment we're in
+        const segmentSize = 1 / (gradientColors.length - 1)
+        const segmentIndex = Math.floor(t / segmentSize)
+        const segmentT = (t % segmentSize) / segmentSize
+
+        // Get the two colors to interpolate between
+        const color1 = gradientColors[Math.min(segmentIndex, gradientColors.length - 1)]
+        const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)]
+
+        // Interpolate between the two colors
+        const r = Math.round((color1[0] + (color2[0] - color1[0]) * segmentT) * 255)
+        const g = Math.round((color1[1] + (color2[1] - color1[1]) * segmentT) * 255)
+        const b = Math.round((color1[2] + (color2[2] - color1[2]) * segmentT) * 255)
+
+        const color = (r << 16) | (g << 8) | b
+
+        graphics.beginFill(color)
+        graphics.drawRect(0, i * stripHeight, this.app.screen.width, stripHeight + 1) // +1 to avoid gaps
+        graphics.endFill()
+      }
+    } else {
+      // Fallback to simple sky blue
+      graphics.beginFill(0x87ceeb)
+      graphics.drawRect(0, 0, this.app.screen.width, this.app.screen.height)
+      graphics.endFill()
     }
 
-    this.cloudShader = new PIXI.Filter(cloudVertexShader, cloudFragmentShader, uniforms)
-    this.container.filters = [this.cloudShader]
+    const skyTexture = this.app.renderer.generateTexture(graphics)
+    this.skySprite = new PIXI.Sprite(skyTexture)
+    this.skySprite.width = this.app.screen.width
+    this.skySprite.height = this.app.screen.height
+
+    graphics.destroy()
+    this.skyContainer.addChild(this.skySprite)
   }
 
   private createClouds(): void {
-    if (!this.cloudTexture) return
-
+    // Create initial clouds spread across the screen
     for (let i = 0; i < CLOUD_CONFIG.COUNT; i++) {
-      const cloud = new Cloud(this.cloudTexture, this.app.screen.width, this.app.screen.height)
-
-      // Stagger initial positions
-      cloud.data.x = this.app.screen.width + i * 200
-      cloud.sprite.position.set(cloud.data.x, cloud.data.y)
-
-      this.clouds.push(cloud)
-      this.container.addChild(cloud.sprite)
+      this.spawnCloud(i)
     }
+  }
+
+  private spawnCloud(index?: number): CloudFragment {
+    const cloud = new CloudFragment(this.app.screen.width, this.app.screen.height)
+
+    if (index !== undefined) {
+      // Initial positioning - spread across screen with more randomization
+      const spacing = (this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN * 3) / CLOUD_CONFIG.COUNT
+      const baseX = -CLOUD_CONFIG.RESPAWN_MARGIN + index * spacing
+      const randomOffset = (Math.random() - 0.5) * spacing * 0.8 // Increased randomization
+      cloud.data.x = baseX + randomOffset
+    } else {
+      // New spawn - start from right side with varied distance
+      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400 // Increased variation
+      cloud.data.x = this.app.screen.width + spawnDistance
+    }
+
+    // Position clouds in specific height bands with more variation
+    const heightBand = Math.random()
+    const verticalVariation = (Math.random() - 0.5) * 0.4 // Additional vertical randomization
+
+    if (heightBand < 0.4) {
+      // Lower clouds (40% chance) with more vertical spread
+      const baseY = this.app.screen.height * (0.6 + verticalVariation * 0.2)
+      cloud.data.y = baseY + Math.random() * this.app.screen.height * 0.35
+    } else if (heightBand < 0.7) {
+      // Middle clouds (30% chance) with varied positioning
+      const baseY = this.app.screen.height * (0.4 + verticalVariation * 0.15)
+      cloud.data.y = baseY + Math.random() * this.app.screen.height * 0.25
+    } else {
+      // Upper clouds (30% chance) with more spread
+      const baseY = this.app.screen.height * (0.1 + verticalVariation * 0.1)
+      cloud.data.y = baseY + Math.random() * this.app.screen.height * 0.35
+    }
+
+    cloud.sprite.position.set(cloud.data.x, cloud.data.y)
+
+    this.cloudFragments.push(cloud)
+    this.cloudContainer.addChild(cloud.sprite)
+
+    return cloud
+  }
+
+  private checkAndSpawnClouds(): void {
+    // Count clouds currently visible on screen
+    const visibleClouds = this.cloudFragments.filter(
+      (cloud) =>
+        cloud.data.x > -CLOUD_CONFIG.RESPAWN_MARGIN &&
+        cloud.data.x < this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN,
+    ).length
+
+    // Spawn new clouds if below minimum
+    if (
+      visibleClouds < CLOUD_CONFIG.MIN_ON_SCREEN &&
+      this.cloudFragments.length < CLOUD_CONFIG.MAX_TOTAL
+    ) {
+      const cloudsToSpawn = Math.min(
+        CLOUD_CONFIG.MIN_ON_SCREEN - visibleClouds,
+        CLOUD_CONFIG.MAX_TOTAL - this.cloudFragments.length,
+      )
+
+      for (let i = 0; i < cloudsToSpawn; i++) {
+        this.spawnCloud()
+      }
+    }
+
+    // Remove clouds that are too far off screen to prevent memory issues
+    this.cloudFragments = this.cloudFragments.filter((cloud) => {
+      if (cloud.data.x < -CLOUD_CONFIG.RESPAWN_MARGIN * 2) {
+        this.cloudContainer.removeChild(cloud.sprite)
+        cloud.destroy()
+        return false
+      }
+      return true
+    })
+  }
+
+  private updateSkyBackground(): void {
+    if (!this.skySprite || !this.currentSkyGradient) return
+
+    // Update sky background with smooth multi-color gradient
+    const graphics = new PIXI.Graphics()
+    const gradientColors = this.currentSkyGradient.gradientColors
+
+    const totalStrips = 100 // More strips for smoother transitions
+    const stripHeight = this.app.screen.height / totalStrips
+
+    for (let i = 0; i < totalStrips; i++) {
+      const t = i / (totalStrips - 1) // Interpolation factor (0 to 1)
+
+      // Find which color segment we're in
+      const segmentSize = 1 / (gradientColors.length - 1)
+      const segmentIndex = Math.floor(t / segmentSize)
+      const segmentT = (t % segmentSize) / segmentSize
+
+      // Get the two colors to interpolate between
+      const color1 = gradientColors[Math.min(segmentIndex, gradientColors.length - 1)]
+      const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)]
+
+      // Interpolate between the two colors
+      const r = Math.round((color1[0] + (color2[0] - color1[0]) * segmentT) * 255)
+      const g = Math.round((color1[1] + (color2[1] - color1[1]) * segmentT) * 255)
+      const b = Math.round((color1[2] + (color2[2] - color1[2]) * segmentT) * 255)
+
+      const color = (r << 16) | (g << 8) | b
+
+      graphics.beginFill(color)
+      graphics.drawRect(0, i * stripHeight, this.app.screen.width, stripHeight + 1) // +1 to avoid gaps
+      graphics.endFill()
+    }
+
+    const newTexture = this.app.renderer.generateTexture(graphics)
+    this.skySprite.texture = newTexture
+    graphics.destroy()
   }
 
   private setupEventListeners(): void {
@@ -85,8 +285,9 @@ export class CloudscapeRenderer {
   private handleResize(): void {
     this.app.renderer.resize(window.innerWidth, window.innerHeight)
 
-    if (this.cloudShader) {
-      this.cloudShader.uniforms.uResolution = [window.innerWidth, window.innerHeight]
+    if (this.skySprite) {
+      this.skySprite.width = window.innerWidth
+      this.skySprite.height = window.innerHeight
     }
   }
 
@@ -95,16 +296,24 @@ export class CloudscapeRenderer {
   }
 
   private update(deltaTime: number): void {
-    this.time += deltaTime * 0.01
+    this.time += deltaTime * 0.003
 
-    // Update shader time uniform
-    if (this.cloudShader) {
-      this.cloudShader.uniforms.uTime = this.time
+    // Update sun position periodically
+    const now = Date.now()
+    if (now - this.lastSunUpdate > this.SUN_UPDATE_INTERVAL) {
+      this.updateSunPosition()
+      this.lastSunUpdate = now
     }
 
-    // Update all clouds
-    for (const cloud of this.clouds) {
-      cloud.update(deltaTime, this.app.screen.width, this.app.screen.height)
+    // Check and spawn clouds periodically
+    if (now - this.lastSpawnCheck > CLOUD_CONFIG.SPAWN_INTERVAL) {
+      this.checkAndSpawnClouds()
+      this.lastSpawnCheck = now
+    }
+
+    // Update all cloud fragments
+    for (const cloud of this.cloudFragments) {
+      cloud.update(deltaTime)
     }
   }
 
@@ -112,12 +321,13 @@ export class CloudscapeRenderer {
     this.app.ticker.remove(this.update.bind(this))
     window.removeEventListener('resize', this.handleResize.bind(this))
 
-    for (const cloud of this.clouds) {
+    for (const cloud of this.cloudFragments) {
       cloud.destroy()
     }
 
-    this.clouds = []
-    this.cloudTexture?.destroy()
+    this.cloudFragments = []
+    this.skySprite?.destroy()
+    this.timeControlWidget.destroy()
     this.app.destroy(true)
   }
 }
