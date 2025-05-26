@@ -52,26 +52,30 @@
   transform: scale(0.95);
 }
 
-.slider-control {
+.controls-block {
   background: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
   box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
-  padding: 15px;
+  padding: 20px;
   backdrop-filter: blur(10px);
-  width: 200px;
+  width: 220px;
 }
 
-.slider-control label {
+.control-item {
+  margin-bottom: 20px;
+}
+
+.control-item:last-child {
+  margin-bottom: 0;
+}
+
+.control-label {
   display: block;
   font-size: 14px;
   font-weight: 500;
   color: #333;
-  margin-bottom: 10px;
-  text-align: center;
-}
-
-.slider-container {
-  position: relative;
+  margin-bottom: 8px;
+  text-align: left;
 }
 
 .slider {
@@ -125,7 +129,31 @@
   border: none;
 }
 
+.social-links {
+  width: 220px;
+  text-align: center;
+}
+
+.social-links a {
+  color: #4a90e2;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 2px solid #4a90e2;
+  border-radius: 4px;
+  background: transparent;
+  transition: all 0.2s ease;
+  display: inline-block;
+  margin: 0 4px;
+}
+
+.social-links a:hover {
+  background: #4a90e2;
+  color: white;
+}
+
 /* Ensure time control widget fits within sidebar */
 .sidebar-section .time-control-widget {
-  width: 200px;
+  width: 220px;
 }

@@ -43,7 +43,7 @@ function _calculatePixelColorLogic(
   }, // alpha is optional as it's not used for color calculation itself
   skyGradient: SkyGradient | null,
 ): number {
-  const { isEdge, edgeDistance, brightness, shadowFactor } = pixelInfo
+  const { brightness, shadowFactor } = pixelInfo
   if (skyGradient) {
     // Determine if this is a daytime period where we need off-white clouds for visibility
     const isDaytime = skyGradient.gradientType === 'radial' // Radial gradients are used for daytime
@@ -245,7 +245,6 @@ function _calculateOrganicBoundary(
   nxLocal: number,
   nyLocal: number,
   fragmentData: CloudFragmentData,
-  pNoise: PerlinNoise,
 ): number {
   // Apply the same vertical compression as in density calculation
   const verticalCompressionFactor = nyLocal > 0 ? 1.5 : 0.8
@@ -378,7 +377,7 @@ const cloudDataGenerator = {
 
         if (densityValue > densityThreshold) {
           const distanceFromCenter = Math.sqrt(nx * nx + ny * ny)
-          const organicBoundary = _calculateOrganicBoundary(nx, ny, fragmentData, perlin)
+          const organicBoundary = _calculateOrganicBoundary(nx, ny, fragmentData)
 
           if (distanceFromCenter <= organicBoundary) {
             // Simplified edge detection

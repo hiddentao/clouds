@@ -79,14 +79,25 @@ export class Sidebar {
     timeSection.appendChild(this.timeControlWidget.getElement())
     this.content.appendChild(timeSection)
 
-    // Add cloud controls
-    this.content.appendChild(this.createCloudCountControl())
-    this.content.appendChild(this.createSpeedControl())
-    this.content.appendChild(this.createDepthLayersControl())
+    // Add combined controls block
+    const controlsSection = document.createElement('div')
+    controlsSection.className = 'sidebar-section'
+    controlsSection.appendChild(this.createControlsBlock())
+    this.content.appendChild(controlsSection)
+
+    // Add social links
+    const socialSection = document.createElement('div')
+    socialSection.className = 'sidebar-section'
+    socialSection.appendChild(this.createSocialLinks())
+    this.content.appendChild(socialSection)
   }
 
-  private createCloudCountControl(): HTMLElement {
-    return this.createSliderControl(
+  private createControlsBlock(): HTMLElement {
+    const controlsBlock = document.createElement('div')
+    controlsBlock.className = 'controls-block'
+
+    // Cloud Count Control
+    const cloudCountItem = this.createControlItem(
       'Cloud Count',
       'cloud-count',
       CLOUD_CONFIG.MIN_CLOUDS,
@@ -97,10 +108,10 @@ export class Sidebar {
         this.debouncedCloudSettingsChange()
       },
     )
-  }
+    controlsBlock.appendChild(cloudCountItem)
 
-  private createSpeedControl(): HTMLElement {
-    return this.createSliderControl(
+    // Speed Control
+    const speedItem = this.createControlItem(
       'Speed',
       'speed',
       CLOUD_CONFIG.SPEED_MIN,
@@ -112,10 +123,10 @@ export class Sidebar {
       },
       0.01,
     )
-  }
+    controlsBlock.appendChild(speedItem)
 
-  private createDepthLayersControl(): HTMLElement {
-    return this.createSliderControl(
+    // Depth Layers Control
+    const depthLayersItem = this.createControlItem(
       'Depth Layers',
       'depth-layers',
       DEPTH_CONFIG.MIN_LAYERS,
@@ -126,9 +137,12 @@ export class Sidebar {
         this.debouncedCloudSettingsChange()
       },
     )
+    controlsBlock.appendChild(depthLayersItem)
+
+    return controlsBlock
   }
 
-  private createSliderControl(
+  private createControlItem(
     label: string,
     id: string,
     min: number,
@@ -137,19 +151,14 @@ export class Sidebar {
     onChange: (value: number) => void,
     step = 1,
   ): HTMLElement {
-    const section = document.createElement('div')
-    section.className = 'sidebar-section'
-
-    const control = document.createElement('div')
-    control.className = 'slider-control'
+    const item = document.createElement('div')
+    item.className = 'control-item'
 
     const labelElement = document.createElement('label')
     labelElement.textContent = label
     labelElement.htmlFor = id
-    control.appendChild(labelElement)
-
-    const sliderContainer = document.createElement('div')
-    sliderContainer.className = 'slider-container'
+    labelElement.className = 'control-label'
+    item.appendChild(labelElement)
 
     const slider = document.createElement('input')
     slider.type = 'range'
@@ -165,11 +174,9 @@ export class Sidebar {
       onChange(Number.parseFloat(target.value))
     })
 
-    sliderContainer.appendChild(slider)
-    control.appendChild(sliderContainer)
-    section.appendChild(control)
+    item.appendChild(slider)
 
-    return section
+    return item
   }
 
   private debouncedCloudSettingsChange(): void {
@@ -199,5 +206,27 @@ export class Sidebar {
 
     // Remove the collapse button from document body
     this.collapseButton?.parentNode?.removeChild(this.collapseButton)
+  }
+
+  private createSocialLinks(): HTMLElement {
+    const socialLinks = document.createElement('div')
+    socialLinks.className = 'social-links'
+
+    const xLink = document.createElement('a')
+    xLink.href = 'https://x.com/taoofdev'
+    xLink.target = '_blank'
+    xLink.rel = 'noopener noreferrer'
+    xLink.textContent = 'X'
+
+    const githubLink = document.createElement('a')
+    githubLink.href = 'https://github.com/hiddentao/clouds'
+    githubLink.target = '_blank'
+    githubLink.rel = 'noopener noreferrer'
+    githubLink.textContent = 'Github'
+
+    socialLinks.appendChild(xLink)
+    socialLinks.appendChild(githubLink)
+
+    return socialLinks
   }
 }
