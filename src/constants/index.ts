@@ -12,10 +12,6 @@ export const CLOUD_CONFIG = {
   SPEED_MAX: 3,
   FADE_SPEED: 0.02,
   RESPAWN_MARGIN: 400,
-  SPAWN_INTERVAL_MIN: 0,
-  SPAWN_INTERVAL_MAX: 2000,
-  BASE_SPAWN_RATE: 1, // clouds per second at normal settings
-  SPAWN_RATE_MULTIPLIER: 1, // reduces base rate for more conservative spawning
 } as const
 
 export const DEPTH_CONFIG = {

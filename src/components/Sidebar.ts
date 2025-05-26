@@ -5,7 +5,6 @@ import { TimeControlWidget } from './TimeControlWidget'
 export interface CloudSettings {
   cloudCount: number
   speed: number
-  spawnInterval: number
   depthLayers: number
 }
 
@@ -51,7 +50,6 @@ export class Sidebar {
     // Add cloud controls
     this.content.appendChild(this.createCloudCountControl())
     this.content.appendChild(this.createSpeedControl())
-    this.content.appendChild(this.createSpawnIntervalControl())
     this.content.appendChild(this.createDepthLayersControl())
   }
 
@@ -81,21 +79,6 @@ export class Sidebar {
         this.debouncedCloudSettingsChange()
       },
       0.01,
-    )
-  }
-
-  private createSpawnIntervalControl(): HTMLElement {
-    return this.createSliderControl(
-      'Spawn Interval',
-      'spawn-interval',
-      CLOUD_CONFIG.SPAWN_INTERVAL_MIN,
-      CLOUD_CONFIG.SPAWN_INTERVAL_MAX,
-      this.cloudSettings.spawnInterval,
-      (value) => {
-        this.cloudSettings.spawnInterval = value
-        this.debouncedCloudSettingsChange()
-      },
-      10,
     )
   }
 

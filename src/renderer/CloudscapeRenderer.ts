@@ -46,17 +46,11 @@ export class CloudscapeRenderer {
   private lastSunUpdate = 0
   private readonly SUN_UPDATE_INTERVAL = SUN_CONFIG.UPDATE_INTERVAL
 
-  // New continuous spawning system
-  private cloudSpawnAccumulator = 0
-  private lastSpawnCheck = 0
-  private readonly BASE_SPAWN_RATE = CLOUD_CONFIG.BASE_SPAWN_RATE
-
   private sidebar: Sidebar
   private customTime: Date | null = null
   private cloudSettings: CloudSettings = {
     cloudCount: CLOUD_CONFIG.MIN_CLOUDS,
     speed: (CLOUD_CONFIG.SPEED_MIN + CLOUD_CONFIG.SPEED_MAX) / 2,
-    spawnInterval: CLOUD_CONFIG.SPAWN_INTERVAL_MIN,
     depthLayers: DEPTH_CONFIG.DEFAULT_LAYERS,
   }
   private currentDepthLayers: Record<string, any> = {}
@@ -431,13 +425,6 @@ export class CloudscapeRenderer {
   }
 
   private async checkAndSpawnClouds(): Promise<void> {
-    const now = Date.now()
-    const deltaTime = this.lastSpawnCheck > 0 ? (now - this.lastSpawnCheck) / 1000 : 0
-    this.lastSpawnCheck = now
-
-    // Skip if deltaTime is too large (e.g., tab was inactive)
-    if (deltaTime > 1.0) return
-
     // Calculate current cloud counts per layer
     const cloudCountsByLayer = new Map<string, number>()
     const targetCountsByLayer = this.calculateCloudCountsPerLayer()
@@ -459,63 +446,45 @@ export class CloudscapeRenderer {
       cloudCountsByLayer.set(cloud.data.depthLayer, currentCount + 1)
     }
 
-    // Calculate spawn rate based on user settings
-    const baseSpawnRate = this.BASE_SPAWN_RATE * CLOUD_CONFIG.SPAWN_RATE_MULTIPLIER
-    const spawnIntervalFactor =
-      this.cloudSettings.spawnInterval === 0
-        ? 1.2
-        : Math.max(
-            0.1,
-            1.2 - (this.cloudSettings.spawnInterval / CLOUD_CONFIG.SPAWN_INTERVAL_MAX) * 1.1,
-          )
+    // Immediately spawn clouds for any layer that has a deficit
+    for (const [layerKey, targetCount] of targetCountsByLayer) {
+      const currentCount = cloudCountsByLayer.get(layerKey) || 0
+      const deficit = targetCount - currentCount
 
-    const adjustedSpawnRate = baseSpawnRate * spawnIntervalFactor
-
-    // Accumulate spawn debt more conservatively
-    this.cloudSpawnAccumulator += adjustedSpawnRate * deltaTime
-
-    // Only spawn one cloud at a time for smooth flow
-    if (this.cloudSpawnAccumulator >= 1.0) {
-      this.cloudSpawnAccumulator -= 1.0
-
-      // Find the layer that needs clouds most
-      let bestLayer: string | null = null
-      let highestDeficit = 0
-
-      for (const [layerKey, targetCount] of targetCountsByLayer) {
-        const currentCount = cloudCountsByLayer.get(layerKey) || 0
-        const deficit = targetCount - currentCount
-
-        if (deficit > 0 && deficit > highestDeficit) {
-          highestDeficit = deficit
-          bestLayer = layerKey
-        }
-      }
-
-      // Calculate total expected clouds for spawn limit
-      const totalExpectedClouds = Array.from(targetCountsByLayer.values()).reduce(
-        (sum, count) => sum + count,
-        0,
-      )
-
-      // Spawn a cloud in the layer that needs it most
-      if (bestLayer && this.cloudFragments.length < totalExpectedClouds * 2) {
-        await this.spawnCloud(undefined, bestLayer, this.currentSkyGradient)
+      // Spawn all missing clouds immediately
+      for (let i = 0; i < deficit; i++) {
+        await this.spawnCloud(undefined, layerKey, this.currentSkyGradient)
       }
     }
 
-    // Clean up clouds that have moved off screen
-    this.cloudFragments = this.cloudFragments.filter((cloud) => {
+    // Clean up clouds that have moved off screen and immediately respawn them
+    const cloudsToRemove: CloudFragment[] = []
+    for (const cloud of this.cloudFragments) {
       if (cloud.data.x < -CLOUD_CONFIG.RESPAWN_MARGIN * 2) {
-        const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
-        if (depthContainer) {
-          depthContainer.removeChild(cloud.displayObject)
-        }
-        cloud.destroy()
-        return false
+        cloudsToRemove.push(cloud)
       }
-      return true
-    })
+    }
+
+    // Remove off-screen clouds and spawn replacements immediately
+    for (const cloud of cloudsToRemove) {
+      const layerKey = cloud.data.depthLayer
+
+      // Remove the cloud
+      const depthContainer = this.depthContainers.get(layerKey)
+      if (depthContainer) {
+        depthContainer.removeChild(cloud.displayObject)
+      }
+      cloud.destroy()
+
+      // Remove from fragments array
+      const index = this.cloudFragments.indexOf(cloud)
+      if (index > -1) {
+        this.cloudFragments.splice(index, 1)
+      }
+
+      // Immediately spawn a replacement
+      await this.spawnCloud(undefined, layerKey, this.currentSkyGradient)
+    }
   }
 
   private setupEventListeners(): void {
@@ -549,7 +518,7 @@ export class CloudscapeRenderer {
       this.lastSunUpdate = now
     }
 
-    // Continuous cloud spawning - check every frame for smooth flow
+    // Check for clouds that need respawning
     await this.checkAndSpawnClouds()
 
     // Update all cloud fragments
@@ -561,7 +530,6 @@ export class CloudscapeRenderer {
   }
 
   private async updateCloudSettings(settings: CloudSettings): Promise<void> {
-    const oldSpawnInterval = this.cloudSettings.spawnInterval
     const oldDepthLayers = this.cloudSettings.depthLayers
     const oldCloudCount = this.cloudSettings.cloudCount
     this.cloudSettings = settings
@@ -592,10 +560,6 @@ export class CloudscapeRenderer {
         )
       }
 
-      // Reset spawn system for new configuration
-      this.cloudSpawnAccumulator = 0
-      this.lastSpawnCheck = 0
-
       // Create new clouds with proper error handling
       try {
         await this.createInitialClouds()
@@ -604,11 +568,6 @@ export class CloudscapeRenderer {
         console.error('Failed to create initial clouds after settings change:', error)
       }
       return
-    }
-
-    if (oldSpawnInterval !== settings.spawnInterval) {
-      // Reset accumulator when spawn interval changes for immediate effect
-      this.cloudSpawnAccumulator = 0
     }
 
     // Update speed for existing clouds
