@@ -4,8 +4,8 @@ export const CANVAS_CONFIG = {
 } as const
 
 export const CLOUD_CONFIG = {
-  MIN_CLOUDS: 10,
-  MAX_CLOUDS: 30,
+  MIN_CLOUDS: 20,
+  MAX_CLOUDS: 50,
   MIN_SCALE: 0.3,
   MAX_SCALE: 2.0,
   SPEED_MIN: 0.01,
@@ -15,9 +15,9 @@ export const CLOUD_CONFIG = {
 } as const
 
 export const DEPTH_CONFIG = {
-  DEFAULT_LAYERS: 5,
-  MIN_LAYERS: 3,
-  MAX_LAYERS: 20,
+  DEFAULT_LAYERS: 10,
+  MIN_LAYERS: 5,
+  MAX_LAYERS: 30,
   SLICE_OVERLAP_FACTOR: 0.3,
   CONSTRAINED_CLOUD_PERCENTAGE: 0.75,
   DEPTH_MULTIPLIER_BASE: 0.6, // base multiplier for layer distribution
@@ -42,7 +42,8 @@ export const generateDepthLayers = (numLayers: number) => {
     }
   > = {}
 
-  const totalVerticalSpace = 0.5 // Bottom 50% of viewport (from 0.5 to 1.0)
+  // Total vertical space from 50% (rear) to 100% (front) of viewport
+  const totalVerticalSpace = 0.5 // From 0.5 to 1.0 (50% of viewport height)
   const sliceHeight = totalVerticalSpace / numLayers
   const overlapAmount = sliceHeight * DEPTH_CONFIG.SLICE_OVERLAP_FACTOR
 
@@ -51,19 +52,19 @@ export const generateDepthLayers = (numLayers: number) => {
     const layerKey = `LAYER_${i}`
 
     // Calculate the primary slice for this layer
-    // Layer 0 (depth=0, furthest) starts at Y=0.5 (middle of screen)
-    // Layer N-1 (depth=1, closest) starts near Y=1.0 (bottom of screen)
+    // Layer 0 (depth=0, furthest/rear) starts at Y=0.5 (50% of screen)
+    // Layer N-1 (depth=1, closest/front) starts at Y=1.0 (bottom of screen)
     const sliceStart = 0.5 + i * sliceHeight
     const sliceEnd = Math.min(1.0, sliceStart + sliceHeight)
 
     // Constrained range (most clouds will be in this slice)
-    const constrainedStart = Math.max(0.5, sliceStart - overlapAmount * 0.5)
-    const constrainedEnd = Math.min(1.0, sliceEnd + overlapAmount * 0.5)
+    const constrainedStart = Math.max(0.5, sliceStart - overlapAmount * 0.3)
+    const constrainedEnd = Math.min(1.0, sliceEnd + overlapAmount * 0.3)
 
-    // Full range (for the remaining clouds that can overlap more)
-    // Furthest clouds start at 0.5 (middle), closest clouds can go to bottom
-    const fullStart = 0.5 + depth * 0.25 // Furthest start at 0.5, closest start at 0.75
-    const fullEnd = 0.75 + depth * 0.25 // Furthest end at 0.75, closest end at 1.0
+    // Full range (for clouds that can overlap between layers)
+    // Allow some variation but keep the general layering
+    const fullStart = Math.max(0.45, sliceStart - overlapAmount * 0.8)
+    const fullEnd = Math.min(1.05, sliceEnd + overlapAmount * 0.8) // Allow slight overflow below viewport
 
     // Reverse scale logic: front layers (depth=1) have smaller clouds, back layers (depth=0) have larger clouds
     const inverseDepth = 1 - depth // 1 for back layers, 0 for front layers

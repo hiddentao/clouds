@@ -43,23 +43,34 @@ function _calculatePixelColorLogic(
   }, // alpha is optional as it's not used for color calculation itself
   skyGradient: SkyGradient | null,
 ): number {
-  const { brightness, shadowFactor } = pixelInfo
+  const { isEdge, edgeDistance, brightness, shadowFactor } = pixelInfo
   if (skyGradient) {
     // Determine if this is a daytime period where we need off-white clouds for visibility
     const isDaytime = skyGradient.gradientType === 'radial' // Radial gradients are used for daytime
 
-    // Use off-white base color for daytime, pure white for other times
+    // Determine if this is a colorful transition period (dawn/dusk/early evening)
+    // These periods need darker clouds for contrast against colorful skies
+    const isColorfulTransition = isColorfulTransitionPeriod(skyGradient)
+
+    // Use different base colors based on time period
     let finalColor: [number, number, number]
-    if (isDaytime) {
+    if (isColorfulTransition) {
+      // Darker clouds for dawn, dusk, and early evening periods
+      finalColor = [0.4, 0.35, 0.45] // Dark purple-gray for contrast
+    } else if (isDaytime) {
       // Off-white with slight warm tint for better visibility against blue sky
       finalColor = [0.95, 0.95, 0.92] // Slightly warm off-white
     } else {
-      // Pure white for dawn, dusk, and night periods
+      // Pure white for night periods
       finalColor = [1.0, 1.0, 1.0]
     }
 
     // Apply brightness variation but keep it subtle for sharper edges
-    const brightnessVariation = 0.8 + brightness * 0.2 // Reduced variation for sharper look
+    const brightnessVariation = isColorfulTransition
+      ? 0.6 + brightness * 0.3
+      : // More variation for colorful periods
+        0.8 + brightness * 0.2 // Less variation for other times
+
     finalColor = [
       Math.min(1.0, finalColor[0] * brightnessVariation),
       Math.min(1.0, finalColor[1] * brightnessVariation),
@@ -68,8 +79,12 @@ function _calculatePixelColorLogic(
 
     // Apply shadow factor to create contrast
     // Shadow factor ranges from 0 (full shadow) to 1 (no shadow)
-    // For better contrast, we'll darken shadowed areas more significantly
-    const shadowMultiplier = 0.3 + shadowFactor * 0.7 // Range from 0.3 to 1.0
+    // For colorful transition periods, enhance shadows for more dramatic contrast
+    const shadowMultiplier = isColorfulTransition
+      ? 0.2 + shadowFactor * 0.6
+      : // Stronger shadows (0.2 to 0.8)
+        0.3 + shadowFactor * 0.7 // Normal shadows (0.3 to 1.0)
+
     finalColor = [
       finalColor[0] * shadowMultiplier,
       finalColor[1] * shadowMultiplier,
@@ -83,6 +98,34 @@ function _calculatePixelColorLogic(
   }
   const gray = Math.floor(brightness * 255)
   return (gray << 16) | (gray << 8) | gray
+}
+
+// Helper function to determine if this is a colorful transition period
+function isColorfulTransitionPeriod(skyGradient: SkyGradient): boolean {
+  if (!skyGradient.gradientColors || skyGradient.gradientColors.length === 0) {
+    return false
+  }
+
+  // Check if the sky has warm/colorful tones typical of dawn/dusk/early evening
+  // Look for orange, pink, purple, or red tones in the gradient
+  for (const color of skyGradient.gradientColors) {
+    const [r, g, b] = color
+
+    // Check for warm sunset/sunrise colors
+    const isWarmOrange = r > 0.7 && g > 0.4 && g < 0.8 && b < 0.6 // Orange tones
+    const isPink = r > 0.6 && g < 0.6 && b > 0.4 && b < 0.8 // Pink tones
+    const isPurple = r > 0.4 && r < 0.8 && g < 0.5 && b > 0.5 // Purple tones
+    const isDeepRed = r > 0.6 && g < 0.4 && b < 0.4 // Deep red tones
+
+    // Check for evening blue-purple transition
+    const isEveningBlue = r < 0.6 && g < 0.7 && b > 0.8 && r + g < 1.0 // Evening blue
+
+    if (isWarmOrange || isPink || isPurple || isDeepRed || isEveningBlue) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function _getBaseYForDepthLayer(layerConfig: any, screenHeight: number, seed: number): number {
@@ -150,92 +193,208 @@ function _calculateCloudDensity(
   fragmentData: CloudFragmentData,
   pNoise: PerlinNoise,
 ): number {
-  // Create semi-oval shape with compressed bottom
+  // Create organic base shape instead of geometric semi-oval
   const centerDistance = Math.sqrt(nxLocal * nxLocal + nyLocal * nyLocal)
 
-  // Apply vertical compression to create flattened bottom
-  const verticalCompressionFactor = nyLocal > 0 ? 1.5 : 0.8 // Compress bottom more than top
+  // Apply organic vertical compression with noise variation
+  const baseCompressionFactor = nyLocal < 0 ? 1.2 : 0.9
+  const compressionNoise = pNoise.noise(
+    nxLocal * 2.0 + fragmentData.noiseOffset * 0.01,
+    nyLocal * 2.0 + fragmentData.noiseOffset * 0.01,
+  )
+  const verticalCompressionFactor = baseCompressionFactor + compressionNoise * 0.3
   const adjustedNy = nyLocal * verticalCompressionFactor
   const adjustedDistance = Math.sqrt(nxLocal * nxLocal + adjustedNy * adjustedNy)
 
-  // Create base cloud shape with semi-oval profile
-  let baseDensity = Math.max(0, 1.0 - adjustedDistance * 0.7)
+  // Create organic base cloud shape with noise-driven boundaries
+  const baseShapeNoise = pNoise.noise(
+    nxLocal * 1.5 + fragmentData.noiseOffset * 0.008,
+    nyLocal * 1.5 + fragmentData.noiseOffset * 0.008,
+  )
+  let baseDensity = Math.max(0, 1.0 - adjustedDistance * (0.6 + baseShapeNoise * 0.2))
 
-  // Add additional bottom compression for more natural cloud base
+  // Add multiple layers of organic noise to eliminate any straight edges
+  const organicNoise1 = pNoise.noise(
+    nxLocal * 3.5 + fragmentData.noiseOffset * 0.012,
+    nyLocal * 3.5 + fragmentData.noiseOffset * 0.012,
+  )
+  const organicNoise2 = pNoise.noise(
+    nxLocal * 7.0 + fragmentData.noiseOffset * 0.018,
+    nyLocal * 7.0 + fragmentData.noiseOffset * 0.018,
+  )
+  const organicNoise3 = pNoise.noise(
+    nxLocal * 14.0 + fragmentData.noiseOffset * 0.025,
+    nyLocal * 14.0 + fragmentData.noiseOffset * 0.025,
+  )
+
+  // Apply organic noise layers with decreasing influence
+  baseDensity *= 0.7 + organicNoise1 * 0.25
+  baseDensity *= 0.8 + organicNoise2 * 0.15
+  baseDensity *= 0.9 + organicNoise3 * 0.1
+
+  // Add aggressive bottom edge variation for realistic cloud bottoms
   if (nyLocal > 0) {
-    const bottomCompressionFactor = 1.0 - nyLocal * 0.3 // Gradually reduce density toward bottom
-    baseDensity *= bottomCompressionFactor
+    // Bottom half of cloud
+    // Multiple noise layers for complex bottom variation
+    const bottomVariationNoise1 = pNoise.noise(
+      nxLocal * 6.0 + fragmentData.noiseOffset * 0.02,
+      nyLocal * 3.0 + fragmentData.noiseOffset * 0.015,
+    )
+    const bottomVariationNoise2 = pNoise.noise(
+      nxLocal * 12.0 + fragmentData.noiseOffset * 0.03,
+      nyLocal * 6.0 + fragmentData.noiseOffset * 0.025,
+    )
+    const bottomDetailNoise = pNoise.noise(
+      nxLocal * 20.0 + fragmentData.noiseOffset * 0.04,
+      nyLocal * 10.0 + fragmentData.noiseOffset * 0.035,
+    )
+
+    // Create complex irregular bottom boundary
+    const horizontalExtent = Math.abs(nxLocal)
+    const bottomIrregularity =
+      (bottomVariationNoise1 * 0.4 + bottomVariationNoise2 * 0.25 + bottomDetailNoise * 0.15) *
+      (1.0 + horizontalExtent * 0.3)
+
+    // Apply the irregularity to create varied bottoms
+    baseDensity *= 0.5 + bottomIrregularity * 0.8
+
+    // Add rotational noise to break up any remaining linear patterns
+    const angle = Math.atan2(nyLocal, nxLocal)
+    const rotationalNoise = pNoise.noise(
+      Math.cos(angle * 5) * 8.0 + fragmentData.noiseOffset * 0.03,
+      Math.sin(angle * 5) * 8.0 + fragmentData.noiseOffset * 0.03,
+    )
+    baseDensity *= 0.7 + rotationalNoise * 0.5
   }
 
-  // Add primary noise layer for organic shape
+  // Keep tops relatively flat but with organic variation
+  if (nyLocal < 0) {
+    const topOrganicNoise = pNoise.noise(
+      nxLocal * 4.0 + fragmentData.noiseOffset * 0.015,
+      nyLocal * 2.0 + fragmentData.noiseOffset * 0.01,
+    )
+    const topUniformityFactor = 1.0 - Math.abs(nyLocal) * 0.1 + topOrganicNoise * 0.05
+    baseDensity *= Math.max(0.3, topUniformityFactor)
+  }
+
+  // Add primary noise layer for overall organic shape
   const primaryScale = 3.0 + fragmentData.shapeComplexity * 2.0
   const primaryNoise = pNoise.noise(
     nxLocal * primaryScale + fragmentData.noiseOffset * 0.01,
     nyLocal * primaryScale + fragmentData.noiseOffset * 0.01,
   )
-  baseDensity *= 0.7 + (primaryNoise + 1) * 0.15 // Normalize noise to 0.7-1.0 range
+  baseDensity *= 0.6 + (primaryNoise + 1) * 0.2 // Wider range for more variation
 
-  // Add secondary detail layer
-  const detailScale = primaryScale * 3.0
+  // Add secondary detail layer with different frequency
+  const detailScale = primaryScale * 2.5
   const detailNoise = pNoise.noise(
-    nxLocal * detailScale + fragmentData.noiseOffset * 0.02,
-    nyLocal * detailScale + fragmentData.noiseOffset * 0.02,
+    nxLocal * detailScale + fragmentData.noiseOffset * 0.022,
+    nyLocal * detailScale + fragmentData.noiseOffset * 0.022,
   )
-  baseDensity += detailNoise * 0.1 // Subtle detail
+  baseDensity += detailNoise * 0.12 // Slightly more detail
 
-  // Apply type-specific modifications with semi-oval consideration
+  // Apply type-specific modifications with organic considerations
   switch (fragmentData.type) {
     case 'wispy': {
-      // Enhance horizontal streaking with bottom compression
-      const horizontalFactor = 1.0 + Math.abs(Math.sin(nyLocal * 6)) * 0.4
-      const verticalFactor = 0.6 + Math.abs(Math.cos(nxLocal * 3)) * 0.4
-      // Apply stronger compression for wispy clouds at bottom
-      const wispyBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.4 : 1.0
-      baseDensity *= horizontalFactor * verticalFactor * wispyBottomFactor
+      // Enhance organic streaking patterns
+      const wispyNoise1 = pNoise.noise(nxLocal * 8.0, nyLocal * 2.0)
+      const wispyNoise2 = pNoise.noise(nxLocal * 4.0, nyLocal * 6.0)
+      const horizontalFactor = 1.0 + wispyNoise1 * 0.5
+      const verticalFactor = 0.6 + wispyNoise2 * 0.4
+
+      const wispyTopFactor = nyLocal < 0 ? 1.0 - Math.abs(nyLocal) * 0.3 : 1.0
+      baseDensity *= horizontalFactor * verticalFactor * wispyTopFactor
+
+      // Add extra organic bottom variation for wispy clouds
+      if (nyLocal > 0) {
+        const wispyBottomNoise = pNoise.noise(
+          nxLocal * 15.0 + fragmentData.noiseOffset * 0.04,
+          nyLocal * 8.0 + fragmentData.noiseOffset * 0.03,
+        )
+        baseDensity *= 0.4 + wispyBottomNoise * 0.8
+      }
       break
     }
 
     case 'puffy': {
-      // Enhance rounded characteristics but maintain flat bottom
-      const puffiness = Math.max(0, 1.0 - centerDistance * 0.4) ** 0.8
-      // Reduce puffiness at bottom to maintain flat base
-      const puffyBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.2 : 1.0
-      baseDensity *= (0.8 + puffiness * 0.3) * puffyBottomFactor
+      // Enhance organic rounded characteristics
+      const puffyNoise = pNoise.noise(
+        nxLocal * 5.0 + fragmentData.noiseOffset * 0.02,
+        nyLocal * 5.0 + fragmentData.noiseOffset * 0.02,
+      )
+      const puffiness = Math.max(0, 1.0 - centerDistance * (0.4 + puffyNoise * 0.2)) ** 0.8
+
+      const puffyTopFactor = nyLocal < 0 ? 1.0 - Math.abs(nyLocal) * 0.15 : 1.0
+      baseDensity *= (0.7 + puffiness * 0.4) * puffyTopFactor
+
+      // Add organic puffy bottom variations
+      if (nyLocal > 0) {
+        const puffyBottomNoise1 = pNoise.noise(nxLocal * 9.0, nyLocal * 7.0)
+        const puffyBottomNoise2 = pNoise.noise(nxLocal * 18.0, nyLocal * 14.0)
+        baseDensity *= 0.5 + puffyBottomNoise1 * 0.4 + puffyBottomNoise2 * 0.2
+      }
       break
     }
 
     case 'dense': {
-      // More solid structure with flat bottom
-      const solidness = Math.max(0, 1.0 - centerDistance * 0.5) ** 0.6
-      // Maintain density but compress bottom
-      const denseBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.15 : 1.0
-      baseDensity *= (0.9 + solidness * 0.2) * denseBottomFactor
+      // More solid structure with organic edges
+      const denseNoise = pNoise.noise(
+        nxLocal * 3.0 + fragmentData.noiseOffset * 0.015,
+        nyLocal * 3.0 + fragmentData.noiseOffset * 0.015,
+      )
+      const solidness = Math.max(0, 1.0 - centerDistance * (0.5 + denseNoise * 0.1)) ** 0.6
+
+      const denseTopFactor = nyLocal < 0 ? 1.0 - Math.abs(nyLocal) * 0.1 : 1.0
+      baseDensity *= (0.8 + solidness * 0.3) * denseTopFactor
+
+      // Even dense clouds need organic irregular bottoms
+      if (nyLocal > 0) {
+        const denseBottomNoise = pNoise.noise(
+          nxLocal * 8.0 + fragmentData.noiseOffset * 0.025,
+          nyLocal * 6.0 + fragmentData.noiseOffset * 0.02,
+        )
+        baseDensity *= 0.6 + denseBottomNoise * 0.6
+      }
       break
     }
 
     case 'scattered': {
-      // Create gaps but maintain semi-oval shape
-      const fragmentNoise = _simpleRandom(fragmentData.noiseOffset + nxLocal * 200 + nyLocal * 300)
-      if (fragmentNoise < 0.3) {
-        baseDensity *= 0.2 // Create gaps
+      // Create organic gaps and variations
+      const scatteredNoise1 = pNoise.noise(
+        nxLocal * 6.0 + fragmentData.noiseOffset * 0.02,
+        nyLocal * 6.0 + fragmentData.noiseOffset * 0.02,
+      )
+      const scatteredNoise2 = pNoise.noise(
+        nxLocal * 12.0 + fragmentData.noiseOffset * 0.035,
+        nyLocal * 12.0 + fragmentData.noiseOffset * 0.035,
+      )
+
+      // Create organic gaps based on noise
+      if (scatteredNoise1 < -0.3 || scatteredNoise2 < -0.4) {
+        baseDensity *= 0.2 // Create organic gaps
       }
-      // Apply bottom compression for scattered clouds too
-      const scatteredBottomFactor = nyLocal > 0 ? 1.0 - nyLocal * 0.25 : 1.0
-      baseDensity *= scatteredBottomFactor
+
+      const scatteredTopFactor = nyLocal < 0 ? 1.0 - Math.abs(nyLocal) * 0.2 : 1.0
+      baseDensity *= scatteredTopFactor
       break
     }
   }
 
-  // Apply edge erosion for organic boundaries with semi-oval shape
-  const edgeNoise = pNoise.noise(
-    nxLocal * 8.0 + fragmentData.noiseOffset * 0.03,
-    nyLocal * 8.0 + fragmentData.noiseOffset * 0.03,
+  // Apply organic edge erosion to eliminate any remaining straight edges
+  const edgeNoise1 = pNoise.noise(
+    nxLocal * 10.0 + fragmentData.noiseOffset * 0.035,
+    nyLocal * 10.0 + fragmentData.noiseOffset * 0.035,
+  )
+  const edgeNoise2 = pNoise.noise(
+    nxLocal * 16.0 + fragmentData.noiseOffset * 0.045,
+    nyLocal * 16.0 + fragmentData.noiseOffset * 0.045,
   )
 
-  if (adjustedDistance > 0.6) {
-    // Apply erosion to edges, considering the semi-oval shape
-    const edgeFactor = 1.0 - (adjustedDistance - 0.6) / 0.4
-    baseDensity *= edgeFactor * (0.8 + edgeNoise * 0.3)
+  if (adjustedDistance > 0.5) {
+    // Apply organic erosion to all edges
+    const edgeFactor = 1.0 - (adjustedDistance - 0.5) / 0.5
+    const organicEdgeFactor = edgeFactor * (0.7 + edgeNoise1 * 0.25 + edgeNoise2 * 0.15)
+    baseDensity *= Math.max(0.1, organicEdgeFactor)
   }
 
   return Math.max(0, Math.min(1, baseDensity * fragmentData.density))
@@ -245,25 +404,124 @@ function _calculateOrganicBoundary(
   nxLocal: number,
   nyLocal: number,
   fragmentData: CloudFragmentData,
+  pNoise: PerlinNoise,
 ): number {
-  // Apply the same vertical compression as in density calculation
-  const verticalCompressionFactor = nyLocal > 0 ? 1.5 : 0.8
+  // Apply organic vertical compression with noise variation
+  const baseCompressionFactor = nyLocal < 0 ? 1.2 : 0.9
+  const compressionNoise = pNoise.noise(
+    nxLocal * 2.0 + fragmentData.noiseOffset * 0.01,
+    nyLocal * 2.0 + fragmentData.noiseOffset * 0.01,
+  )
+  const verticalCompressionFactor = baseCompressionFactor + compressionNoise * 0.2
   const adjustedNy = nyLocal * verticalCompressionFactor
 
-  // Calculate boundary based on compressed coordinates
-  const angle = Math.atan2(adjustedNy, nxLocal)
-  const irregularity = Math.sin(angle * 6) * 0.1 + Math.cos(angle * 8) * 0.05
-  let boundary = 1.0 + irregularity
+  // Start with organic base boundary
+  const baseBoundaryNoise = pNoise.noise(
+    nxLocal * 1.8 + fragmentData.noiseOffset * 0.01,
+    nyLocal * 1.8 + fragmentData.noiseOffset * 0.01,
+  )
+  let boundary = 1.0 + baseBoundaryNoise * 0.15
 
-  // Apply additional bottom compression to boundary
+  // Add multiple layers of organic noise for completely curved edges
+  const organicNoise1 = pNoise.noise(
+    nxLocal * 4.0 + fragmentData.noiseOffset * 0.015,
+    nyLocal * 4.0 + fragmentData.noiseOffset * 0.015,
+  )
+  boundary += organicNoise1 * 0.25
+
+  const organicNoise2 = pNoise.noise(
+    nxLocal * 8.0 + fragmentData.noiseOffset * 0.025,
+    nyLocal * 8.0 + fragmentData.noiseOffset * 0.025,
+  )
+  boundary += organicNoise2 * 0.15
+
+  const organicNoise3 = pNoise.noise(
+    nxLocal * 16.0 + fragmentData.noiseOffset * 0.035,
+    nyLocal * 16.0 + fragmentData.noiseOffset * 0.035,
+  )
+  boundary += organicNoise3 * 0.08
+
+  // Add rotational noise to break up any linear patterns
+  const angle = Math.atan2(adjustedNy, nxLocal)
+  const rotationalNoise1 = pNoise.noise(
+    Math.cos(angle * 3) * 6.0 + fragmentData.noiseOffset * 0.02,
+    Math.sin(angle * 3) * 6.0 + fragmentData.noiseOffset * 0.02,
+  )
+  const rotationalNoise2 = pNoise.noise(
+    Math.cos(angle * 7) * 10.0 + fragmentData.noiseOffset * 0.03,
+    Math.sin(angle * 7) * 10.0 + fragmentData.noiseOffset * 0.03,
+  )
+  boundary += rotationalNoise1 * 0.12 + rotationalNoise2 * 0.08
+
+  // Add spiral noise to create completely organic curves
+  const spiralAngle = angle + Math.sqrt(nxLocal * nxLocal + nyLocal * nyLocal) * 2.0
+  const spiralNoise = pNoise.noise(
+    Math.cos(spiralAngle) * 8.0 + fragmentData.noiseOffset * 0.025,
+    Math.sin(spiralAngle) * 8.0 + fragmentData.noiseOffset * 0.025,
+  )
+  boundary += spiralNoise * 0.1
+
+  // Add additional bottom edge variation for realistic cloud bottoms
   if (nyLocal > 0) {
-    const bottomBoundaryFactor = 1.0 - nyLocal * 0.2 // Compress boundary at bottom
-    boundary *= bottomBoundaryFactor
+    // Bottom half of cloud
+    const bottomEdgeNoise1 = pNoise.noise(
+      nxLocal * 10.0 + fragmentData.noiseOffset * 0.03,
+      nyLocal * 4.0 + fragmentData.noiseOffset * 0.02,
+    )
+    const bottomEdgeNoise2 = pNoise.noise(
+      nxLocal * 20.0 + fragmentData.noiseOffset * 0.045,
+      nyLocal * 8.0 + fragmentData.noiseOffset * 0.035,
+    )
+    boundary += bottomEdgeNoise1 * 0.18 + bottomEdgeNoise2 * 0.1
+
+    // Add turbulent bottom variation
+    const turbulentNoise = pNoise.noise(
+      nxLocal * 15.0 + fragmentData.noiseOffset * 0.04,
+      nyLocal * 12.0 + fragmentData.noiseOffset * 0.038,
+    )
+    boundary += turbulentNoise * 0.12
   }
 
-  // Apply edge softness
-  boundary *= 1.0 - fragmentData.edgeSoftness * 0.2
-  return Math.max(0.6, Math.min(1.3, boundary))
+  // Keep top boundary more uniform but still organic
+  if (nyLocal < 0) {
+    const topOrganicNoise1 = pNoise.noise(
+      nxLocal * 5.0 + fragmentData.noiseOffset * 0.018,
+      nyLocal * 3.0 + fragmentData.noiseOffset * 0.012,
+    )
+    const topOrganicNoise2 = pNoise.noise(
+      nxLocal * 12.0 + fragmentData.noiseOffset * 0.03,
+      nyLocal * 6.0 + fragmentData.noiseOffset * 0.025,
+    )
+
+    // Reduce but don't eliminate top variation
+    const topVariation =
+      (topOrganicNoise1 * 0.08 + topOrganicNoise2 * 0.05) * (1.0 - Math.abs(nyLocal) * 0.3)
+    boundary += topVariation
+  }
+
+  // Apply organic edge softness
+  const softnessFactor = 1.0 - fragmentData.edgeSoftness * 0.15
+  boundary *= softnessFactor
+
+  // Add final micro-variations for completely organic edges
+  const microNoise1 = pNoise.noise(
+    nxLocal * 25.0 + fragmentData.noiseOffset * 0.05,
+    nyLocal * 25.0 + fragmentData.noiseOffset * 0.05,
+  )
+  const microNoise2 = pNoise.noise(
+    nxLocal * 35.0 + fragmentData.noiseOffset * 0.06,
+    nyLocal * 35.0 + fragmentData.noiseOffset * 0.06,
+  )
+  boundary += microNoise1 * 0.04 + microNoise2 * 0.03
+
+  // Add fractal-like noise for natural complexity
+  const fractalNoise = pNoise.noise(
+    nxLocal * 18.0 + fragmentData.noiseOffset * 0.042,
+    nyLocal * 18.0 + fragmentData.noiseOffset * 0.042,
+  )
+  boundary += fractalNoise * 0.06
+
+  return Math.max(0.4, Math.min(1.6, boundary))
 }
 
 // --- Comlink Exposed Object ---
@@ -377,7 +635,7 @@ const cloudDataGenerator = {
 
         if (densityValue > densityThreshold) {
           const distanceFromCenter = Math.sqrt(nx * nx + ny * ny)
-          const organicBoundary = _calculateOrganicBoundary(nx, ny, fragmentData)
+          const organicBoundary = _calculateOrganicBoundary(nx, ny, fragmentData, perlin)
 
           if (distanceFromCenter <= organicBoundary) {
             // Simplified edge detection
