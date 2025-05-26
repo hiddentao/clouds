@@ -11,22 +11,23 @@ export class CloudFragment {
   private graphicsForTexture: PIXI.Graphics
   private pixelProperties: PixelProperty[]
   private cloudDataWorker: Comlink.Remote<CloudDataWorker>
+  private isUpdatingSkyGradient = false // Guard against concurrent updates
 
   private constructor(
-    fullCloudData: FullCloudData, 
+    fullCloudData: FullCloudData,
     worker: Comlink.Remote<CloudDataWorker>,
-    skyGradient?: SkyGradient | null
+    skyGradient?: SkyGradient | null,
   ) {
-    this.data = fullCloudData.fragmentData;
-    this.pixelProperties = fullCloudData.pixelProperties;
-    this.skyGradient = skyGradient || null;
-    this.cloudDataWorker = worker;
-    
-    this.displayObject = new PIXI.Sprite();
-    this.graphicsForTexture = new PIXI.Graphics();
+    this.data = fullCloudData.fragmentData
+    this.pixelProperties = fullCloudData.pixelProperties
+    this.skyGradient = skyGradient || null
+    this.cloudDataWorker = worker
 
-    this.createRenderTextureIfNeeded(); 
-    this.initializeSpriteProperties();
+    this.displayObject = new PIXI.Sprite()
+    this.graphicsForTexture = new PIXI.Graphics()
+
+    this.createRenderTextureIfNeeded()
+    this.initializeSpriteProperties()
   }
 
   public static async create(
@@ -34,77 +35,113 @@ export class CloudFragment {
     screenWidth: number,
     screenHeight: number,
     depthLayers?: Record<string, any>,
-    initialSkyGradient?: SkyGradient | null
+    initialSkyGradient?: SkyGradient | null,
   ): Promise<CloudFragment> {
-    const fullCloudData = await worker.generateFullCloudData(screenWidth, screenHeight, depthLayers, initialSkyGradient);
-    return new CloudFragment(fullCloudData, worker, initialSkyGradient);
+    const fullCloudData = await worker.generateFullCloudData(
+      screenWidth,
+      screenHeight,
+      depthLayers,
+      initialSkyGradient,
+    )
+    return new CloudFragment(fullCloudData, worker, initialSkyGradient)
   }
 
   private createRenderTextureIfNeeded(): void {
-    const rtWidth = Math.ceil(this.data.width);
-    const rtHeight = Math.ceil(this.data.height);
+    const rtWidth = Math.ceil(this.data.width)
+    const rtHeight = Math.ceil(this.data.height)
 
-    if (!this.renderTexture || this.renderTexture.width !== rtWidth || this.renderTexture.height !== rtHeight) {
+    if (
+      !this.renderTexture ||
+      this.renderTexture.width !== rtWidth ||
+      this.renderTexture.height !== rtHeight
+    ) {
       if (this.renderTexture) {
-        this.renderTexture.destroy(true);
+        this.renderTexture.destroy(true)
       }
-      this.renderTexture = PIXI.RenderTexture.create({ width: rtWidth, height: rtHeight });
-      this.displayObject.texture = this.renderTexture;
+      this.renderTexture = PIXI.RenderTexture.create({ width: rtWidth, height: rtHeight })
+      this.displayObject.texture = this.renderTexture
     }
   }
 
   private redrawToRenderTexture(renderer: PIXI.Renderer): void {
-    if (!this.renderTexture) return;
-    this.graphicsForTexture.clear();
+    if (!this.renderTexture) return
+    this.graphicsForTexture.clear()
 
     for (const pixel of this.pixelProperties) {
-      this.graphicsForTexture.beginFill(pixel.color, pixel.alpha);
-      this.graphicsForTexture.drawRect(pixel.pixelX, pixel.pixelY, pixel.pixelSize, pixel.pixelSize);
-      this.graphicsForTexture.endFill();
+      this.graphicsForTexture.beginFill(pixel.color, pixel.alpha)
+      this.graphicsForTexture.drawRect(pixel.pixelX, pixel.pixelY, pixel.pixelSize, pixel.pixelSize)
+      this.graphicsForTexture.endFill()
     }
-    renderer.render(this.graphicsForTexture, { renderTexture: this.renderTexture, clear: true });
+    renderer.render(this.graphicsForTexture, { renderTexture: this.renderTexture, clear: true })
   }
 
   private initializeSpriteProperties(): void {
-    this.displayObject.position.set(this.data.x, this.data.y);
+    this.displayObject.position.set(this.data.x, this.data.y)
     if (this.data.width > 0 && this.data.height > 0) {
-        this.displayObject.pivot.set(this.data.width / 2, this.data.height / 2);
+      this.displayObject.pivot.set(this.data.width / 2, this.data.height / 2)
     }
-    this.displayObject.x += this.data.width / 2;
-    this.displayObject.y += this.data.height / 2;
-    this.displayObject.alpha = this.data.alpha;
+    this.displayObject.x += this.data.width / 2
+    this.displayObject.y += this.data.height / 2
+    this.displayObject.alpha = this.data.alpha
   }
 
   update(deltaTime: number): void {
-    this.data.x -= this.data.speed * deltaTime;
-    this.displayObject.position.set(this.data.x, this.data.y); 
+    this.data.x -= this.data.speed * deltaTime
+    this.displayObject.position.set(this.data.x, this.data.y)
   }
 
   async updateSkyGradient(skyGradient: SkyGradient | null, renderer: PIXI.Renderer): Promise<void> {
-    if (this.skyGradient !== skyGradient || !this.displayObject.texture || !this.renderTexture) { 
-      this.skyGradient = skyGradient;
-      
-      const newColors = await this.cloudDataWorker.recalculatePixelColors(this.pixelProperties, this.skyGradient);
-      
-      if (newColors.length === this.pixelProperties.length) {
-        for (let i = 0; i < this.pixelProperties.length; i++) {
-          this.pixelProperties[i].color = newColors[i];
+    // Prevent concurrent updates
+    if (this.isUpdatingSkyGradient) {
+      console.log('CloudFragment: Skipping concurrent updateSkyGradient call')
+      return
+    }
+
+    if (this.skyGradient !== skyGradient || !this.displayObject.texture || !this.renderTexture) {
+      this.isUpdatingSkyGradient = true
+
+      try {
+        this.skyGradient = skyGradient
+
+        const newColors = await this.cloudDataWorker.recalculatePixelColors(
+          this.pixelProperties,
+          this.skyGradient,
+        )
+
+        if (newColors.length === this.pixelProperties.length) {
+          for (let i = 0; i < this.pixelProperties.length; i++) {
+            this.pixelProperties[i].color = newColors[i]
+          }
+        } else {
+          console.error('CloudFragment: Mismatch in length of new colors and pixel properties.', {
+            newColorsLength: newColors.length,
+            pixelPropertiesLength: this.pixelProperties.length,
+            pixelProperties: this.pixelProperties,
+            newColors: newColors,
+          })
+          // Fallback: only update colors for the minimum length to avoid crashes
+          const minLength = Math.min(newColors.length, this.pixelProperties.length)
+          for (let i = 0; i < minLength; i++) {
+            this.pixelProperties[i].color = newColors[i]
+          }
         }
-      } else {
-        console.error('CloudFragment: Mismatch in length of new colors and pixel properties.');
+
+        this.redrawToRenderTexture(renderer)
+      } catch (error) {
+        console.error('CloudFragment: Error updating sky gradient:', error)
+      } finally {
+        this.isUpdatingSkyGradient = false
       }
-      
-      this.redrawToRenderTexture(renderer);
     }
   }
 
   destroy(): void {
-    this.displayObject.destroy();
+    this.displayObject.destroy()
     if (this.renderTexture) {
-        this.renderTexture.destroy(true);
-        this.renderTexture = null;
+      this.renderTexture.destroy(true)
+      this.renderTexture = null
     }
-    this.graphicsForTexture.destroy();
-    this.pixelProperties = [];
+    this.graphicsForTexture.destroy()
+    this.pixelProperties = []
   }
 }

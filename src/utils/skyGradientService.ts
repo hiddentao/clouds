@@ -22,13 +22,15 @@ export class SkyGradientService {
   }
 
   // This method now calls the worker
-  async generateSkyGradient(sunPosition: SunPosition, currentTimeEpochMs?: number): Promise<SkyGradient> {
+  async generateSkyGradient(
+    sunPosition: SunPosition,
+    currentTimeEpochMs?: number,
+  ): Promise<SkyGradient> {
     // Comlink will handle passing Date objects correctly. Primitives and plain objects are fine.
     // For SunPosition, ensure it's a plain object if it's an instance of a class not known to worker.
     // However, SunPosition is an interface, so it should be fine.
     return this.worker.generateSkyGradient(sunPosition, currentTimeEpochMs)
   }
-
 
   // The convertToHex method can remain here if it's used by the main thread,
   // or moved to the worker if only used for worker-internal calculations.

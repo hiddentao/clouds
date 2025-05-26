@@ -55,7 +55,7 @@ export class CloudscapeRenderer {
 
     this.app.stage.addChild(this.skyContainer)
     this.app.stage.addChild(this.cloudContainer)
-    
+
     this.initializeDepthLayers()
 
     this.locationService = LocationService.getInstance()
@@ -84,16 +84,16 @@ export class CloudscapeRenderer {
 
   private initializeDepthLayers(): void {
     this.currentDepthLayers = generateDepthLayers(this.cloudSettings.depthLayers)
-    
+
     // Clear existing containers
     this.depthContainers.clear()
     this.cloudContainer.removeChildren()
-    
+
     // Create containers for each depth layer in order (back to front)
     const layerKeys = Object.keys(this.currentDepthLayers).sort((a, b) => {
       return this.currentDepthLayers[a].depth - this.currentDepthLayers[b].depth
     })
-    
+
     for (const layerKey of layerKeys) {
       const container = new PIXI.Container()
       this.depthContainers.set(layerKey, container)
@@ -109,7 +109,7 @@ export class CloudscapeRenderer {
       this.skySprite.width = this.app.screen.width
       this.skySprite.height = this.app.screen.height
       this.skyContainer.addChild(this.skySprite)
-      
+
       await this.updateSunPosition() // This will generate initial gradient and call updateSkyBackground
       await this.createInitialClouds()
       this.setupEventListeners()
@@ -141,8 +141,14 @@ export class CloudscapeRenderer {
   private async updateSunPosition(): Promise<void> {
     if (!this.currentLocation) return
     const timeToUse = this.customTime || new Date()
-    this.currentSunPosition = this.sunCalculator.calculateSunPosition(this.currentLocation, timeToUse)
-    this.currentSkyGradient = await this.skyGradientService.generateSkyGradient(this.currentSunPosition, timeToUse.getTime()) 
+    this.currentSunPosition = this.sunCalculator.calculateSunPosition(
+      this.currentLocation,
+      timeToUse,
+    )
+    this.currentSkyGradient = await this.skyGradientService.generateSkyGradient(
+      this.currentSunPosition,
+      timeToUse.getTime(),
+    )
 
     console.log('Sun position updated:', {
       time: timeToUse.toLocaleTimeString(),
@@ -153,18 +159,19 @@ export class CloudscapeRenderer {
     })
 
     await this.updateSkyBackground()
-    
+
     // Cloud sky gradient updates are now async
-    const updatePromises = this.cloudFragments.map(cloud => 
-      cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
-    );
-    await Promise.all(updatePromises);
+    const updatePromises = this.cloudFragments.map((cloud) =>
+      cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer),
+    )
+    await Promise.all(updatePromises)
   }
 
   private async updateSkyBackground(): Promise<void> {
-    if (!this.skySprite) { // Should have been created in initialize
-      console.error("skySprite not initialized before updateSkyBackground call");
-      return;
+    if (!this.skySprite) {
+      // Should have been created in initialize
+      console.error('skySprite not initialized before updateSkyBackground call')
+      return
     }
 
     if (!this.currentSkyGradient) {
@@ -195,7 +202,7 @@ export class CloudscapeRenderer {
 
     const newTexture = this.app.renderer.generateTexture(graphics)
     if (this.skySprite.texture) {
-        this.skySprite.texture.destroy(true) // Destroy old texture before assigning new one
+      this.skySprite.texture.destroy(true) // Destroy old texture before assigning new one
     }
     this.skySprite.texture = newTexture
     graphics.destroy()
@@ -209,7 +216,7 @@ export class CloudscapeRenderer {
       const layerConfig = this.currentDepthLayers[layerKey]
       const depthMultiplier = 0.3 + layerConfig.depth * 0.7
       const cloudsForThisLayer = Math.floor(this.cloudSettings.cloudCount * depthMultiplier)
-      
+
       for (let i = 0; i < cloudsForThisLayer; i++) {
         const totalWidth = this.app.screen.width * 3 + CLOUD_CONFIG.RESPAWN_MARGIN * 2
         const spacing = totalWidth / cloudsForThisLayer
@@ -221,48 +228,56 @@ export class CloudscapeRenderer {
       }
     }
     const newCloudsWithNulls = await Promise.all(cloudPromises)
-    const newClouds = newCloudsWithNulls.filter(c => c !== null) as CloudFragment[];
+    const newClouds = newCloudsWithNulls.filter((c) => c !== null) as CloudFragment[]
 
     // Initial drawing for new clouds is handled within spawnCloud or by the first updateSkyGradient call
     // If an explicit initial draw is still needed after creation and before first regular update:
-    const initialDrawPromises = newClouds.map(cloud => {
+    const initialDrawPromises = newClouds.map((cloud) => {
       if (this.currentSkyGradient) {
         // Ensure renderer is available and texture exists before trying to draw
         // The check for !this.renderTexture in updateSkyGradient should handle initial draw.
-        return cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer);
+        return cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
       }
-      return Promise.resolve();
-    });
-    await Promise.all(initialDrawPromises);
+      return Promise.resolve()
+    })
+    await Promise.all(initialDrawPromises)
   }
 
-  private async spawnCloud(initialX?: number, targetLayerKey?: string, initialSkyGradientForWorker?: SkyGradient | null): Promise<CloudFragment | null> {
+  private async spawnCloud(
+    initialX?: number,
+    targetLayerKey?: string,
+    initialSkyGradientForWorker?: SkyGradient | null,
+  ): Promise<CloudFragment | null> {
     let selectedLayerKey = targetLayerKey
     if (!selectedLayerKey) {
-      const layerKeys = Object.keys(this.currentDepthLayers);
+      const layerKeys = Object.keys(this.currentDepthLayers)
       if (layerKeys.length === 0) {
-        console.error("CloudscapeRenderer: No depth layers available to spawn cloud into. Cannot spawn cloud.");
-        return null; // Cannot proceed without layers
+        console.error(
+          'CloudscapeRenderer: No depth layers available to spawn cloud into. Cannot spawn cloud.',
+        )
+        return null // Cannot proceed without layers
       }
-      const weights = layerKeys.map(key => 0.3 + (this.currentDepthLayers[key]?.depth || 0) * 0.7);
-      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-      let random = Math.random() * totalWeight;
+      const weights = layerKeys.map((key) => 0.3 + (this.currentDepthLayers[key]?.depth || 0) * 0.7)
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+      let random = Math.random() * totalWeight
       // Ensure selectedLayerKey is definitely assigned a value from layerKeys
-      selectedLayerKey = layerKeys[0]; // Default to first layer if loop doesn't find one (should not happen if totalWeight > 0)
+      selectedLayerKey = layerKeys[0] // Default to first layer if loop doesn't find one (should not happen if totalWeight > 0)
       for (let i = 0; i < layerKeys.length; i++) {
         if (random <= weights[i]) {
-          selectedLayerKey = layerKeys[i];
-          break;
+          selectedLayerKey = layerKeys[i]
+          break
         }
-        random -= weights[i];
+        random -= weights[i]
       }
     }
 
     // At this point, selectedLayerKey should be a valid key from currentDepthLayers or the provided targetLayerKey
-    const layerConfig = this.currentDepthLayers[selectedLayerKey]; 
+    const layerConfig = this.currentDepthLayers[selectedLayerKey]
     if (!layerConfig) {
-        console.error(`CloudscapeRenderer: Layer configuration not found for key: '${selectedLayerKey}'. Cannot spawn cloud.`);
-        return null; // Cannot proceed without layer configuration
+      console.error(
+        `CloudscapeRenderer: Layer configuration not found for key: '${selectedLayerKey}'. Cannot spawn cloud.`,
+      )
+      return null // Cannot proceed without layer configuration
     }
 
     const cloud = await CloudFragment.create(
@@ -270,37 +285,41 @@ export class CloudscapeRenderer {
       this.app.screen.width,
       this.app.screen.height,
       this.currentDepthLayers,
-      initialSkyGradientForWorker
-    );
-    
-    cloud.data.depthLayer = selectedLayerKey; // No longer needs assertion
-    cloud.data.depth = layerConfig.depth;
-    cloud.data.speedMultiplier = layerConfig.speedMultiplier;
-    
-    const scale = layerConfig.scaleRange.min + Math.random() * (layerConfig.scaleRange.max - layerConfig.scaleRange.min);
-    const alpha = layerConfig.alphaRange.min + Math.random() * (layerConfig.alphaRange.max - layerConfig.alphaRange.min);
-    cloud.data.scale = scale;
-    cloud.data.alpha = alpha * cloud.data.density; // Alpha is now part of fragmentData from worker
-    cloud.data.width = cloud.data.width / (cloud.data.scale || 1) * scale; // Adjust size based on new scale
-    cloud.data.height = cloud.data.height / (cloud.data.scale || 1) * scale;
+      initialSkyGradientForWorker,
+    )
 
-    const baseY = this.getBaseYForLayer(layerConfig);
-    cloud.data.y = baseY + (Math.random() - 0.5) * this.app.screen.height * 0.1;
-    cloud.data.speed = this.cloudSettings.speed * cloud.data.speedMultiplier;
+    cloud.data.depthLayer = selectedLayerKey // No longer needs assertion
+    cloud.data.depth = layerConfig.depth
+    cloud.data.speedMultiplier = layerConfig.speedMultiplier
+
+    const scale =
+      layerConfig.scaleRange.min +
+      Math.random() * (layerConfig.scaleRange.max - layerConfig.scaleRange.min)
+    const alpha =
+      layerConfig.alphaRange.min +
+      Math.random() * (layerConfig.alphaRange.max - layerConfig.alphaRange.min)
+    cloud.data.scale = scale
+    cloud.data.alpha = alpha * cloud.data.density // Alpha is now part of fragmentData from worker
+    cloud.data.width = (cloud.data.width / (cloud.data.scale || 1)) * scale // Adjust size based on new scale
+    cloud.data.height = (cloud.data.height / (cloud.data.scale || 1)) * scale
+
+    const baseY = this.getBaseYForLayer(layerConfig)
+    cloud.data.y = baseY + (Math.random() - 0.5) * this.app.screen.height * 0.1
+    cloud.data.speed = this.cloudSettings.speed * cloud.data.speedMultiplier
 
     if (initialX !== undefined) {
-      cloud.data.x = initialX;
+      cloud.data.x = initialX
     } else {
-      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400;
-      cloud.data.x = this.app.screen.width + spawnDistance;
+      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400
+      cloud.data.x = this.app.screen.width + spawnDistance
     }
 
-    cloud.displayObject.alpha = cloud.data.alpha; // Set final alpha on the sprite
+    cloud.displayObject.alpha = cloud.data.alpha // Set final alpha on the sprite
 
-    this.cloudFragments.push(cloud);
-    const depthContainer = this.depthContainers.get(cloud.data.depthLayer);
+    this.cloudFragments.push(cloud)
+    const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
     if (depthContainer) {
-      depthContainer.addChild(cloud.displayObject);
+      depthContainer.addChild(cloud.displayObject)
     }
 
     // The first updateSkyGradient (if skyGradient is present and different or texture not ready)
@@ -308,10 +327,10 @@ export class CloudscapeRenderer {
     // If initialSkyGradientForWorker was null, and this.currentSkyGradient is now available,
     // this call will trigger the first color calculation and draw.
     if (this.currentSkyGradient) {
-       await cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer);
+      await cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
     }
 
-    return cloud;
+    return cloud
   }
 
   private async checkAndSpawnClouds(): Promise<void> {
@@ -325,7 +344,8 @@ export class CloudscapeRenderer {
     let totalExpectedClouds = 0
     for (const layerKey of layerKeys) {
       const layerConfig = this.currentDepthLayers[layerKey]
-      if (layerConfig) { // Check if layerConfig exists
+      if (layerConfig) {
+        // Check if layerConfig exists
         const depthMultiplier = 0.3 + layerConfig.depth * 0.7
         totalExpectedClouds += Math.floor(this.cloudSettings.cloudCount * depthMultiplier)
       }
@@ -343,7 +363,7 @@ export class CloudscapeRenderer {
       for (let i = 0; i < cloudsToSpawn; i++) {
         spawnPromises.push(this.spawnCloud(undefined, undefined, this.currentSkyGradient))
       }
-      const spawnedCloudsWithNulls = await Promise.all(spawnPromises);
+      const spawnedCloudsWithNulls = await Promise.all(spawnPromises)
       // Filter out nulls before doing anything else with them, though spawnCloud itself adds to this.cloudFragments
       // This step might be redundant if spawnCloud handles adding to this.cloudFragments correctly upon successful creation.
     }
@@ -414,9 +434,9 @@ export class CloudscapeRenderer {
         cloud.destroy()
       }
       this.cloudFragments = []
-      
+
       this.initializeDepthLayers()
-      
+
       await this.createInitialClouds() // createInitialClouds is already async
       return
     }
@@ -447,10 +467,10 @@ export class CloudscapeRenderer {
   private getBaseYForLayer(layerConfig: any): number {
     // Determine if this cloud should be constrained to its slice or allowed to overlap
     const shouldConstrain = Math.random() < layerConfig.constrainedPercentage
-    
+
     let yMin: number
     let yMax: number
-    
+
     if (shouldConstrain) {
       // Most clouds stay within their constrained slice
       yMin = this.app.screen.height * layerConfig.constrainedYRange.min
@@ -460,7 +480,7 @@ export class CloudscapeRenderer {
       yMin = this.app.screen.height * layerConfig.yRange.min
       yMax = this.app.screen.height * layerConfig.yRange.max
     }
-    
+
     return yMin + Math.random() * (yMax - yMin)
   }
 }
