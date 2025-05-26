@@ -1,11 +1,12 @@
 import './Sidebar.css'
-import { CLOUD_CONFIG } from '../constants'
+import { CLOUD_CONFIG, DEPTH_CONFIG } from '../constants'
 import { TimeControlWidget } from './TimeControlWidget'
 
 export interface CloudSettings {
   cloudCount: number
   speed: number
   spawnInterval: number
+  depthLayers: number
 }
 
 export class Sidebar {
@@ -50,6 +51,7 @@ export class Sidebar {
     this.content.appendChild(this.createCloudCountControl())
     this.content.appendChild(this.createSpeedControl())
     this.content.appendChild(this.createSpawnIntervalControl())
+    this.content.appendChild(this.createDepthLayersControl())
   }
 
   private createCloudCountControl(): HTMLElement {
@@ -93,6 +95,20 @@ export class Sidebar {
         this.onCloudSettingsChange(this.cloudSettings)
       },
       10,
+    )
+  }
+
+  private createDepthLayersControl(): HTMLElement {
+    return this.createSliderControl(
+      'Depth Layers',
+      'depth-layers',
+      DEPTH_CONFIG.MIN_LAYERS,
+      DEPTH_CONFIG.MAX_LAYERS,
+      this.cloudSettings.depthLayers,
+      (value) => {
+        this.cloudSettings.depthLayers = value
+        this.onCloudSettingsChange(this.cloudSettings)
+      },
     )
   }
 
