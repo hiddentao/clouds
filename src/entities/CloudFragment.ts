@@ -13,6 +13,8 @@ export class CloudFragment {
   private cloudDataWorker: Comlink.Remote<CloudDataWorker>
   private isUpdatingSkyGradient = false // Guard against concurrent updates
   private hasBeenDrawn = false // Track if texture has been drawn at least once
+  private lastColorUpdateTime = 0 // Track when colors were last updated
+  private readonly COLOR_UPDATE_THROTTLE = 50 // Minimum ms between color updates
 
   private constructor(
     fullCloudData: FullCloudData,
@@ -108,18 +110,31 @@ export class CloudFragment {
       return
     }
 
+    // Throttle color updates for performance
+    const now = Date.now()
+    const timeSinceLastUpdate = now - this.lastColorUpdateTime
+
     // Always draw if texture is not ready, or if sky gradient has changed, or if never drawn before
     const skyGradientChanged = this.skyGradient !== skyGradient
     const textureNotReady = !this.displayObject.texture || !this.renderTexture
     const needsRedraw = skyGradientChanged || textureNotReady || !this.hasBeenDrawn
+
+    // Skip update if throttled and no critical changes
+    if (
+      skyGradientChanged &&
+      timeSinceLastUpdate < this.COLOR_UPDATE_THROTTLE &&
+      this.hasBeenDrawn
+    ) {
+      return
+    }
 
     // Check if light direction has changed (requires shadow recalculation)
     const lightDirectionChanged =
       skyGradientChanged &&
       this.skyGradient?.lightDirection &&
       skyGradient?.lightDirection &&
-      (this.skyGradient.lightDirection.x !== skyGradient.lightDirection.x ||
-        this.skyGradient.lightDirection.y !== skyGradient.lightDirection.y)
+      (Math.abs(this.skyGradient.lightDirection.x - skyGradient.lightDirection.x) > 0.01 ||
+        Math.abs(this.skyGradient.lightDirection.y - skyGradient.lightDirection.y) > 0.01)
 
     if (needsRedraw) {
       this.isUpdatingSkyGradient = true
@@ -128,6 +143,7 @@ export class CloudFragment {
         // Only recalculate colors if sky gradient has actually changed
         if (skyGradientChanged) {
           this.skyGradient = skyGradient
+          this.lastColorUpdateTime = now
 
           // Use shadow recalculation if light direction changed, otherwise just color recalculation
           if (lightDirectionChanged) {

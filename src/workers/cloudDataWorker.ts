@@ -17,6 +17,7 @@ export interface PixelProperty {
   pixelX: number
   pixelY: number
   pixelSize: number
+  depth: number // Add depth for depth-based lighting calculations
 }
 
 // Define the output structure of the worker
@@ -40,35 +41,71 @@ function _calculatePixelColorLogic(
     shadowFactor: number
     brightness: number
     alpha?: number
+    depth?: number // Add depth parameter for depth-based lighting
+    depthDarkeningFactor?: number // Pre-calculated depth factor to avoid recalculation
+    isDaytime?: boolean // Pre-calculated to avoid repeated checks
   }, // alpha is optional as it's not used for color calculation itself
   skyGradient: SkyGradient | null,
 ): number {
-  const { isEdge, edgeDistance, brightness, shadowFactor } = pixelInfo
+  const { brightness, shadowFactor, depth, depthDarkeningFactor, isDaytime } = pixelInfo
 
   if (skyGradient) {
+    // Use pre-calculated values if available, otherwise calculate
+    const isCurrentlyDaytime =
+      isDaytime !== undefined
+        ? isDaytime
+        : skyGradient.cloudBaseColor[0] > 0.8 &&
+          skyGradient.cloudBaseColor[1] > 0.8 &&
+          skyGradient.cloudBaseColor[2] > 0.8
+
     // Use the pre-calculated cloud colors from the sky gradient
     const baseColor = skyGradient.cloudBaseColor
     const highlightColor = skyGradient.cloudHighlightColor
     const shadowColor = skyGradient.cloudShadowColor
 
+    // Apply depth-based lighting for daytime only
+    let depthAdjustedShadowFactor = shadowFactor
+    let depthAdjustedBaseColor = baseColor
+
+    if (isCurrentlyDaytime && (depthDarkeningFactor !== undefined || depth !== undefined)) {
+      // Use pre-calculated factor if available, otherwise calculate
+      const darkeningFactor =
+        depthDarkeningFactor !== undefined
+          ? depthDarkeningFactor
+          : depth !== undefined
+            ? 1.0 - depth * 0.4
+            : 1.0
+
+      // Apply depth darkening to the base color
+      depthAdjustedBaseColor = [
+        baseColor[0] * darkeningFactor,
+        baseColor[1] * darkeningFactor,
+        baseColor[2] * darkeningFactor,
+      ]
+
+      // Also reduce the shadow factor slightly for closer clouds to enhance the depth effect
+      const depthShadowMultiplier = depth !== undefined ? 0.8 + depth * 0.2 : 1.0
+      depthAdjustedShadowFactor = shadowFactor * depthShadowMultiplier
+    }
+
     // Determine which color to use based on shadow factor
     let finalColor: [number, number, number]
 
-    if (shadowFactor > 0.7) {
+    if (depthAdjustedShadowFactor > 0.7) {
       // Lit areas: interpolate between base and highlight colors
-      const highlightMix = (shadowFactor - 0.7) / 0.3 // 0 to 1 for shadowFactor 0.7 to 1.0
+      const highlightMix = (depthAdjustedShadowFactor - 0.7) / 0.3 // 0 to 1 for shadowFactor 0.7 to 1.0
       finalColor = [
-        baseColor[0] + (highlightColor[0] - baseColor[0]) * highlightMix,
-        baseColor[1] + (highlightColor[1] - baseColor[1]) * highlightMix,
-        baseColor[2] + (highlightColor[2] - baseColor[2]) * highlightMix,
+        depthAdjustedBaseColor[0] + (highlightColor[0] - depthAdjustedBaseColor[0]) * highlightMix,
+        depthAdjustedBaseColor[1] + (highlightColor[1] - depthAdjustedBaseColor[1]) * highlightMix,
+        depthAdjustedBaseColor[2] + (highlightColor[2] - depthAdjustedBaseColor[2]) * highlightMix,
       ]
     } else {
       // Shadow areas: interpolate between shadow and base colors
-      const shadowMix = shadowFactor / 0.7 // 0 to 1 for shadowFactor 0.0 to 0.7
+      const shadowMix = depthAdjustedShadowFactor / 0.7 // 0 to 1 for shadowFactor 0.0 to 0.7
       finalColor = [
-        shadowColor[0] + (baseColor[0] - shadowColor[0]) * shadowMix,
-        shadowColor[1] + (baseColor[1] - shadowColor[1]) * shadowMix,
-        shadowColor[2] + (baseColor[2] - shadowColor[2]) * shadowMix,
+        shadowColor[0] + (depthAdjustedBaseColor[0] - shadowColor[0]) * shadowMix,
+        shadowColor[1] + (depthAdjustedBaseColor[1] - shadowColor[1]) * shadowMix,
+        shadowColor[2] + (depthAdjustedBaseColor[2] - shadowColor[2]) * shadowMix,
       ]
     }
 
@@ -497,18 +534,18 @@ const cloudDataGenerator = {
   ): FullCloudData {
     const seedBase = Date.now() + _simpleRandom(Math.random() * 1000) * 10000 // Base seed for this cloud
 
-    // Determine if this is daytime based on sky gradient (if available)
-    let isDaytime = false
-    if (initialSkyGradient?.cloudBaseColor) {
-      const baseColor = initialSkyGradient.cloudBaseColor
-      isDaytime = baseColor[0] > 0.8 && baseColor[1] > 0.8 && baseColor[2] > 0.8
-    }
-
     // Select cloud type based on time of day
     let type: 'wispy' | 'puffy' | 'dense' | 'scattered'
     const randomValue = _simpleRandom(seedBase)
 
-    if (isDaytime) {
+    // Determine if this is daytime based on sky gradient (if available)
+    const isDaytimeForCloudType = initialSkyGradient?.cloudBaseColor
+      ? initialSkyGradient.cloudBaseColor[0] > 0.8 &&
+        initialSkyGradient.cloudBaseColor[1] > 0.8 &&
+        initialSkyGradient.cloudBaseColor[2] > 0.8
+      : false
+
+    if (isDaytimeForCloudType) {
       // Daytime: favor puffy and dense clouds (70% chance)
       if (randomValue < 0.4) {
         type = 'puffy'
@@ -587,12 +624,12 @@ const cloudDataGenerator = {
     }
 
     const pixelProperties: PixelProperty[] = []
-    const pixelSize = 8
+    const pixelSize = 10 // Increased from 8 to 10 for better performance
     const gridWidth = Math.ceil(fragmentData.width / pixelSize)
     const gridHeight = Math.ceil(fragmentData.height / pixelSize)
 
     // Limit grid size to prevent OOM during initial generation
-    const MAX_GRID_SIZE = 100 // Maximum 100x100 grid
+    const MAX_GRID_SIZE = 80 // Reduced from 100 to 80 for better performance
     const actualGridWidth = Math.min(gridWidth, MAX_GRID_SIZE)
     const actualGridHeight = Math.min(gridHeight, MAX_GRID_SIZE)
 
@@ -605,6 +642,14 @@ const cloudDataGenerator = {
     const lightDir = initialSkyGradient?.lightDirection || { x: -0.2, y: -0.8 }
     const centerX = fragmentData.width / 2
     const centerY = fragmentData.height / 2
+
+    // Pre-calculate common values for performance
+    const isDaytime = initialSkyGradient
+      ? initialSkyGradient.cloudBaseColor[0] > 0.8 &&
+        initialSkyGradient.cloudBaseColor[1] > 0.8 &&
+        initialSkyGradient.cloudBaseColor[2] > 0.8
+      : false
+    const depthDarkeningFactor = isDaytime ? 1.0 - fragmentData.depth * 0.4 : 1.0
 
     const densityMemo: Map<string, number> = new Map()
     const getMemoizedDensity = (nxLocal: number, nyLocal: number): number => {
@@ -703,6 +748,9 @@ const cloudDataGenerator = {
               edgeDistance,
               shadowFactor,
               brightness: currentBrightness,
+              depth: fragmentData.depth, // Pass depth for depth-based lighting
+              depthDarkeningFactor, // Pre-calculated for performance
+              isDaytime, // Pre-calculated for performance
             }
             const calculatedColor = _calculatePixelColorLogic(
               colorInfoForCalc,
@@ -722,6 +770,7 @@ const cloudDataGenerator = {
               pixelX,
               pixelY,
               pixelSize: adjustedPixelSize,
+              depth: fragmentData.depth,
             })
           }
         }
@@ -749,6 +798,13 @@ const cloudDataGenerator = {
       return []
     }
 
+    // Pre-calculate common values to avoid redundant calculations
+    const isDaytime = newSkyGradient
+      ? newSkyGradient.cloudBaseColor[0] > 0.8 &&
+        newSkyGradient.cloudBaseColor[1] > 0.8 &&
+        newSkyGradient.cloudBaseColor[2] > 0.8
+      : false
+
     for (let i = 0; i < pixelProps.length; i++) {
       const prop = pixelProps[i]
 
@@ -764,13 +820,17 @@ const cloudDataGenerator = {
         typeof prop.isEdge !== 'boolean' ||
         typeof prop.edgeDistance !== 'number' ||
         typeof prop.shadowFactor !== 'number' ||
-        typeof prop.brightness !== 'number'
+        typeof prop.brightness !== 'number' ||
+        typeof prop.depth !== 'number'
       ) {
         console.error(`Worker: Missing or invalid properties at index ${i}:`, prop)
         continue // Skip this invalid property
       }
 
       try {
+        // Pre-calculate depth darkening factor for performance
+        const depthDarkeningFactor = isDaytime ? 1.0 - prop.depth * 0.4 : 1.0
+
         // Ensure we pass the correct structure to _calculatePixelColorLogic
         const colorInfo = {
           density: prop.density,
@@ -778,6 +838,9 @@ const cloudDataGenerator = {
           edgeDistance: prop.edgeDistance,
           shadowFactor: prop.shadowFactor, // Use existing shadow factor
           brightness: prop.brightness,
+          depth: prop.depth, // Pass depth for depth-based lighting
+          depthDarkeningFactor, // Pre-calculated for performance
+          isDaytime, // Pre-calculated for performance
         }
         const color = _calculatePixelColorLogic(colorInfo, newSkyGradient)
         newColors.push(color)
@@ -821,6 +884,13 @@ const cloudDataGenerator = {
       return { colors: [], updatedPixelProps: [] }
     }
 
+    // Pre-calculate common values to avoid redundant calculations
+    const isDaytime = newSkyGradient
+      ? newSkyGradient.cloudBaseColor[0] > 0.8 &&
+        newSkyGradient.cloudBaseColor[1] > 0.8 &&
+        newSkyGradient.cloudBaseColor[2] > 0.8
+      : false
+
     // Get new light direction from sky gradient
     const lightDir = newSkyGradient?.lightDirection || { x: -0.2, y: -0.8 }
 
@@ -838,6 +908,9 @@ const cloudDataGenerator = {
         typeof prop.density !== 'number' ||
         typeof prop.isEdge !== 'boolean' ||
         typeof prop.edgeDistance !== 'number' ||
+        typeof prop.shadowFactor !== 'number' ||
+        typeof prop.brightness !== 'number' ||
+        typeof prop.depth !== 'number' ||
         typeof prop.nx !== 'number' ||
         typeof prop.ny !== 'number'
       ) {
@@ -879,6 +952,9 @@ const cloudDataGenerator = {
         newBrightness *= 0.8 + newShadowFactor * 0.2 // Shadows reduce brightness slightly
         newBrightness = Math.max(0.3, Math.min(1.0, newBrightness))
 
+        // Pre-calculate depth darkening factor for performance
+        const depthDarkeningFactor = isDaytime ? 1.0 - prop.depth * 0.4 : 1.0
+
         // Create updated pixel property
         const updatedProp: PixelProperty = {
           ...prop,
@@ -893,6 +969,9 @@ const cloudDataGenerator = {
           edgeDistance: prop.edgeDistance,
           shadowFactor: newShadowFactor,
           brightness: newBrightness,
+          depth: prop.depth, // Pass depth for depth-based lighting
+          depthDarkeningFactor, // Pre-calculated for performance
+          isDaytime, // Pre-calculated for performance
         }
         const color = _calculatePixelColorLogic(colorInfo, newSkyGradient)
 

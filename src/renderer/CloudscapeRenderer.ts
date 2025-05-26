@@ -58,6 +58,8 @@ export class CloudscapeRenderer {
   private currentDepthLayers: Record<string, any> = {}
   private cloudDataWorker: Comlink.Remote<CloudDataWorker>
   private isUpdatingSettings = false // Flag to prevent race conditions during settings updates
+  private lastCloudSpawnCheck = 0 // Throttle cloud spawning checks
+  private readonly CLOUD_SPAWN_CHECK_INTERVAL = 100 // Check every 100ms instead of every frame
 
   constructor(canvas: HTMLCanvasElement) {
     this.app = new PIXI.Application({
@@ -170,10 +172,22 @@ export class CloudscapeRenderer {
       this.currentLocation,
       timeToUse,
     )
-    this.currentSkyGradient = await this.skyGradientService.generateSkyGradient(
+    const newSkyGradient = await this.skyGradientService.generateSkyGradient(
       this.currentSunPosition,
       timeToUse.getTime(),
     )
+
+    // Check if the sky gradient has actually changed significantly
+    const skyGradientChanged =
+      !this.currentSkyGradient ||
+      this.currentSkyGradient.gradientType !== newSkyGradient.gradientType ||
+      Math.abs(this.currentSkyGradient.lightDirection.x - newSkyGradient.lightDirection.x) > 0.01 ||
+      Math.abs(this.currentSkyGradient.lightDirection.y - newSkyGradient.lightDirection.y) > 0.01 ||
+      this.currentSkyGradient.cloudBaseColor.some(
+        (c, i) => Math.abs(c - newSkyGradient.cloudBaseColor[i]) > 0.05,
+      )
+
+    this.currentSkyGradient = newSkyGradient
 
     console.log('Sun position updated:', {
       time: timeToUse.toLocaleTimeString(),
@@ -181,15 +195,28 @@ export class CloudscapeRenderer {
       currentPeriod: this.currentSunPosition.currentTimePeriod.name,
       altitude: this.currentSunPosition.altitude,
       azimuth: this.currentSunPosition.azimuth,
+      skyGradientChanged,
     })
 
     await this.updateSkyBackground()
 
-    // Cloud sky gradient updates are now async
-    const updatePromises = this.cloudFragments.map((cloud) =>
-      cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer),
-    )
-    await Promise.all(updatePromises)
+    // Only update clouds if the sky gradient has changed significantly
+    if (skyGradientChanged) {
+      // Batch cloud updates in smaller groups to avoid blocking the main thread
+      const BATCH_SIZE = 10
+      for (let i = 0; i < this.cloudFragments.length; i += BATCH_SIZE) {
+        const batch = this.cloudFragments.slice(i, i + BATCH_SIZE)
+        const updatePromises = batch.map((cloud) =>
+          cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer),
+        )
+        await Promise.all(updatePromises)
+
+        // Small delay between batches to prevent blocking
+        if (i + BATCH_SIZE < this.cloudFragments.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1))
+        }
+      }
+    }
   }
 
   private async updateSkyBackground(): Promise<void> {
@@ -570,7 +597,7 @@ export class CloudscapeRenderer {
       return
     }
 
-    // Calculate current cloud counts per layer
+    // Calculate current cloud counts per layer more efficiently
     const cloudCountsByLayer = new Map<string, number>()
     const targetCountsByLayer = this.calculateCloudCountsPerLayer()
 
@@ -579,7 +606,7 @@ export class CloudscapeRenderer {
       cloudCountsByLayer.set(layerKey, 0)
     }
 
-    // Count existing clouds by layer
+    // Count existing clouds by layer (only count visible clouds for efficiency)
     const visibleClouds = this.cloudFragments.filter(
       (cloud) =>
         cloud.data.x > -CLOUD_CONFIG.RESPAWN_MARGIN &&
@@ -591,18 +618,27 @@ export class CloudscapeRenderer {
       cloudCountsByLayer.set(cloud.data.depthLayer, currentCount + 1)
     }
 
-    // Immediately spawn clouds for any layer that has a deficit
+    // Spawn missing clouds in batches to avoid blocking
+    const spawnPromises: Promise<CloudFragment | null>[] = []
     for (const [layerKey, targetCount] of targetCountsByLayer) {
       const currentCount = cloudCountsByLayer.get(layerKey) || 0
       const deficit = targetCount - currentCount
 
-      // Spawn all missing clouds immediately
-      for (let i = 0; i < deficit; i++) {
-        await this.spawnCloud(undefined, layerKey, this.currentSkyGradient)
+      // Limit spawning to prevent performance issues
+      const maxSpawnPerFrame = 2
+      const actualSpawnCount = Math.min(deficit, maxSpawnPerFrame)
+
+      for (let i = 0; i < actualSpawnCount; i++) {
+        spawnPromises.push(this.spawnCloud(undefined, layerKey, this.currentSkyGradient))
       }
     }
 
-    // Clean up clouds that have moved off screen and immediately respawn them
+    // Execute spawning in parallel but limit concurrency
+    if (spawnPromises.length > 0) {
+      await Promise.all(spawnPromises)
+    }
+
+    // Clean up off-screen clouds more efficiently
     const cloudsToRemove: CloudFragment[] = []
     for (const cloud of this.cloudFragments) {
       if (cloud.data.x < -CLOUD_CONFIG.RESPAWN_MARGIN * 2) {
@@ -610,25 +646,32 @@ export class CloudscapeRenderer {
       }
     }
 
-    // Remove off-screen clouds and spawn replacements immediately
-    for (const cloud of cloudsToRemove) {
-      const layerKey = cloud.data.depthLayer
+    // Remove off-screen clouds and spawn replacements in batches
+    if (cloudsToRemove.length > 0) {
+      const replacementPromises: Promise<CloudFragment | null>[] = []
 
-      // Remove the cloud
-      const depthContainer = this.depthContainers.get(layerKey)
-      if (depthContainer) {
-        depthContainer.removeChild(cloud.displayObject)
+      for (const cloud of cloudsToRemove) {
+        const layerKey = cloud.data.depthLayer
+
+        // Remove the cloud
+        const depthContainer = this.depthContainers.get(layerKey)
+        if (depthContainer) {
+          depthContainer.removeChild(cloud.displayObject)
+        }
+        cloud.destroy()
+
+        // Remove from fragments array
+        const index = this.cloudFragments.indexOf(cloud)
+        if (index > -1) {
+          this.cloudFragments.splice(index, 1)
+        }
+
+        // Queue replacement spawn
+        replacementPromises.push(this.spawnCloud(undefined, layerKey, this.currentSkyGradient))
       }
-      cloud.destroy()
 
-      // Remove from fragments array
-      const index = this.cloudFragments.indexOf(cloud)
-      if (index > -1) {
-        this.cloudFragments.splice(index, 1)
-      }
-
-      // Immediately spawn a replacement
-      await this.spawnCloud(undefined, layerKey, this.currentSkyGradient)
+      // Spawn replacements
+      await Promise.all(replacementPromises)
     }
   }
 
@@ -666,10 +709,13 @@ export class CloudscapeRenderer {
       this.lastSunUpdate = now
     }
 
-    // Check for clouds that need respawning
-    await this.checkAndSpawnClouds()
+    // Check for clouds that need respawning (throttled for performance)
+    if (now - this.lastCloudSpawnCheck > this.CLOUD_SPAWN_CHECK_INTERVAL) {
+      await this.checkAndSpawnClouds()
+      this.lastCloudSpawnCheck = now
+    }
 
-    // Update all cloud fragments
+    // Update all cloud fragments (position only, no expensive operations)
     for (const cloud of this.cloudFragments) {
       cloud.update(deltaTime)
     }
@@ -680,8 +726,23 @@ export class CloudscapeRenderer {
   private async updateCloudSettings(settings: CloudSettings): Promise<void> {
     const oldDepthLayers = this.cloudSettings.depthLayers
     const oldCloudCount = this.cloudSettings.cloudCount
+    const oldSpeed = this.cloudSettings.speed
     this.cloudSettings = settings
 
+    // If only speed changed, just update existing clouds
+    if (
+      oldDepthLayers === settings.depthLayers &&
+      oldCloudCount === settings.cloudCount &&
+      oldSpeed !== settings.speed
+    ) {
+      // Update speed for existing clouds efficiently
+      for (const cloud of this.cloudFragments) {
+        cloud.data.speed = settings.speed * cloud.data.speedMultiplier
+      }
+      return
+    }
+
+    // Only recreate clouds if depth layers or cloud count changed
     if (oldDepthLayers !== settings.depthLayers || oldCloudCount !== settings.cloudCount) {
       console.log(
         `Cloud settings changing: oldCount=${oldCloudCount}, newCount=${settings.cloudCount}, currentClouds=${this.cloudFragments.length}`,
@@ -691,14 +752,24 @@ export class CloudscapeRenderer {
       this.isUpdatingSettings = true
 
       try {
-        // Properly clean up existing clouds
-        for (const cloud of this.cloudFragments) {
-          const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
-          if (depthContainer) {
-            depthContainer.removeChild(cloud.displayObject)
+        // Properly clean up existing clouds in batches to avoid blocking
+        const CLEANUP_BATCH_SIZE = 20
+        for (let i = 0; i < this.cloudFragments.length; i += CLEANUP_BATCH_SIZE) {
+          const batch = this.cloudFragments.slice(i, i + CLEANUP_BATCH_SIZE)
+          for (const cloud of batch) {
+            const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
+            if (depthContainer) {
+              depthContainer.removeChild(cloud.displayObject)
+            }
+            cloud.destroy()
           }
-          cloud.destroy()
+
+          // Small delay between cleanup batches
+          if (i + CLEANUP_BATCH_SIZE < this.cloudFragments.length) {
+            await new Promise((resolve) => setTimeout(resolve, 1))
+          }
         }
+
         this.cloudFragments = []
         console.log(`Cleaned up all clouds, remaining: ${this.cloudFragments.length}`)
 
@@ -713,7 +784,7 @@ export class CloudscapeRenderer {
         }
 
         // Add a small delay to ensure cleanup is complete
-        await new Promise((resolve) => setTimeout(resolve, 50))
+        await new Promise((resolve) => setTimeout(resolve, 10))
 
         // Create new clouds with proper error handling
         await this.createInitialClouds()
@@ -727,10 +798,8 @@ export class CloudscapeRenderer {
       return
     }
 
-    // Update speed for existing clouds
-    for (const cloud of this.cloudFragments) {
-      cloud.data.speed = settings.speed * cloud.data.speedMultiplier
-    }
+    // If we get here, no significant changes were made
+    console.log('Cloud settings updated with no significant changes')
   }
 
   public destroy(): void {
