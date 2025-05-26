@@ -162,6 +162,11 @@ export class CloudFragment {
   }
 
   destroy(): void {
+    // Guard against double destruction
+    if (!this.displayObject || this.displayObject.destroyed) {
+      return
+    }
+
     this.displayObject.destroy()
     if (this.renderTexture) {
       this.renderTexture.destroy(true)

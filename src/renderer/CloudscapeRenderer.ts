@@ -55,6 +55,7 @@ export class CloudscapeRenderer {
   }
   private currentDepthLayers: Record<string, any> = {}
   private cloudDataWorker: Comlink.Remote<CloudDataWorker>
+  private isUpdatingSettings = false // Flag to prevent race conditions during settings updates
 
   constructor(canvas: HTMLCanvasElement) {
     this.app = new PIXI.Application({
@@ -425,6 +426,11 @@ export class CloudscapeRenderer {
   }
 
   private async checkAndSpawnClouds(): Promise<void> {
+    // Skip if settings are being updated to prevent race conditions
+    if (this.isUpdatingSettings) {
+      return
+    }
+
     // Calculate current cloud counts per layer
     const cloudCountsByLayer = new Map<string, number>()
     const targetCountsByLayer = this.calculateCloudCountsPerLayer()
@@ -539,33 +545,39 @@ export class CloudscapeRenderer {
         `Cloud settings changing: oldCount=${oldCloudCount}, newCount=${settings.cloudCount}, currentClouds=${this.cloudFragments.length}`,
       )
 
-      // Properly clean up existing clouds
-      for (const cloud of this.cloudFragments) {
-        const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
-        if (depthContainer) {
-          depthContainer.removeChild(cloud.displayObject)
-        }
-        cloud.destroy()
-      }
-      this.cloudFragments = []
-      console.log(`Cleaned up all clouds, remaining: ${this.cloudFragments.length}`)
+      // Set flag to prevent race conditions with checkAndSpawnClouds
+      this.isUpdatingSettings = true
 
-      // Reinitialize depth layers if needed
-      if (oldDepthLayers !== settings.depthLayers) {
-        this.initializeDepthLayers()
-      } else {
-        // Even if depth layers didn't change, ensure containers are ready
-        console.log(
-          `Depth containers available: ${Array.from(this.depthContainers.keys()).join(', ')}`,
-        )
-      }
-
-      // Create new clouds with proper error handling
       try {
+        // Properly clean up existing clouds
+        for (const cloud of this.cloudFragments) {
+          const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
+          if (depthContainer) {
+            depthContainer.removeChild(cloud.displayObject)
+          }
+          cloud.destroy()
+        }
+        this.cloudFragments = []
+        console.log(`Cleaned up all clouds, remaining: ${this.cloudFragments.length}`)
+
+        // Reinitialize depth layers if needed
+        if (oldDepthLayers !== settings.depthLayers) {
+          this.initializeDepthLayers()
+        } else {
+          // Even if depth layers didn't change, ensure containers are ready
+          console.log(
+            `Depth containers available: ${Array.from(this.depthContainers.keys()).join(', ')}`,
+          )
+        }
+
+        // Create new clouds with proper error handling
         await this.createInitialClouds()
         console.log(`Cloud settings updated: ${this.cloudFragments.length} clouds created`)
       } catch (error) {
         console.error('Failed to create initial clouds after settings change:', error)
+      } finally {
+        // Clear flag to allow normal operation
+        this.isUpdatingSettings = false
       }
       return
     }
