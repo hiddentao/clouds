@@ -1,15 +1,8 @@
 import * as Comlink from 'comlink'
-import type { SkyGradient, SunPosition, TimeOfDay, TimePeriodInfo } from '../types'
+import type { SkyGradient, SunPosition, TimeOfDay } from '../types'
 
 const skyGradientCalculator = {
-  // Copy all private methods from SkyGradientService here
-  // (getGradientColorsForTimeOfDay, getSunColorForTimeOfDay, getCloudColorsForTimeOfDay,
-  // calculateTransitionInfo, getTimeOfDayBoundaries, easeInOutCubic, interpolateColor, interpolateGradientColors)
-  // For brevity, I will assume they are copied here.
-
-  // Copied and adjusted: getGradientColorsForTimeOfDay
   getGradientColorsForTimeOfDay(timeOfDay: TimeOfDay): [number, number, number][] {
-    // Updated and expanded color definitions for new TimeOfDay enum
     switch (timeOfDay) {
       case 'deep_night':
         return [

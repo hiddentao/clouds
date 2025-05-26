@@ -4,8 +4,8 @@ globs:
 alwaysApply: true
 ---
 - include rules from [typescript.mdc](mdc:.cursor/rules/typescript.mdc), [biome.json](mdc:biome.json), [bun.mdc](mdc:.cursor/rules/bun.mdc), [husky.mdc](mdc:.cursor/rules/husky.mdc), [pixijs.mdc](mdc:.cursor/rules/pixijs.mdc)
-- do not auto-start the development server to test changes.
-- do not auto-open the browser page.
+- DO NOT auto-start the development server to test changes or for any other reason - ask me to start it instead.
+- DO NOT auto-open the browser page for any reason.
 
 ## Cloud rendering
 

@@ -1,4 +1,4 @@
-import { type SunTimeDef, getPosition, getSunTimes } from 'suncalc3'
+import { getPosition, getSunTimes } from 'suncalc3'
 import type { LocationData, SunPosition, TimeOfDay, TimePeriodInfo } from '../types'
 
 export class SunCalculator {

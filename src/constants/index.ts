@@ -4,8 +4,8 @@ export const CANVAS_CONFIG = {
 } as const
 
 export const CLOUD_CONFIG = {
-  MIN_CLOUDS: 5,
-  MAX_CLOUDS: 10,
+  MIN_CLOUDS: 20,
+  MAX_CLOUDS: 40,
   MIN_SCALE: 0.3,
   MAX_SCALE: 2.0,
   SPEED_MIN: 0.01,
@@ -13,7 +13,9 @@ export const CLOUD_CONFIG = {
   FADE_SPEED: 0.02,
   RESPAWN_MARGIN: 400,
   SPAWN_INTERVAL_MIN: 0,
-  SPAWN_INTERVAL_MAX: 5000,
+  SPAWN_INTERVAL_MAX: 2000,
+  BASE_SPAWN_RATE: 1, // clouds per second at normal settings
+  SPAWN_RATE_MULTIPLIER: 1, // reduces base rate for more conservative spawning
 } as const
 
 export const DEPTH_CONFIG = {
@@ -22,6 +24,12 @@ export const DEPTH_CONFIG = {
   MAX_LAYERS: 50,
   SLICE_OVERLAP_FACTOR: 0.3,
   CONSTRAINED_CLOUD_PERCENTAGE: 0.75,
+  DEPTH_MULTIPLIER_BASE: 0.6, // base multiplier for layer distribution
+  DEPTH_MULTIPLIER_RANGE: 0.4, // range multiplier for layer distribution
+} as const
+
+export const SUN_CONFIG = {
+  UPDATE_INTERVAL: 60000, // milliseconds between sun position updates
 } as const
 
 export const generateDepthLayers = (numLayers: number) => {
@@ -38,7 +46,7 @@ export const generateDepthLayers = (numLayers: number) => {
     }
   > = {}
 
-  const totalVerticalSpace = 0.5 // Bottom 50% of viewport
+  const totalVerticalSpace = 0.5 // Bottom 50% of viewport (from 0.5 to 1.0)
   const sliceHeight = totalVerticalSpace / numLayers
   const overlapAmount = sliceHeight * DEPTH_CONFIG.SLICE_OVERLAP_FACTOR
 
@@ -47,6 +55,8 @@ export const generateDepthLayers = (numLayers: number) => {
     const layerKey = `LAYER_${i}`
 
     // Calculate the primary slice for this layer
+    // Layer 0 (depth=0, furthest) starts at Y=0.5 (middle of screen)
+    // Layer N-1 (depth=1, closest) starts near Y=1.0 (bottom of screen)
     const sliceStart = 0.5 + i * sliceHeight
     const sliceEnd = Math.min(1.0, sliceStart + sliceHeight)
 
@@ -55,8 +65,9 @@ export const generateDepthLayers = (numLayers: number) => {
     const constrainedEnd = Math.min(1.0, sliceEnd + overlapAmount * 0.5)
 
     // Full range (for the remaining clouds that can overlap more)
-    const fullStart = 0.5 + depth * 0.25
-    const fullEnd = 0.75 + depth * 0.25
+    // Furthest clouds start at 0.5 (middle), closest clouds can go to bottom
+    const fullStart = 0.5 + depth * 0.25 // Furthest start at 0.5, closest start at 0.75
+    const fullEnd = 0.75 + depth * 0.25 // Furthest end at 0.75, closest end at 1.0
 
     layers[layerKey] = {
       depth,

@@ -482,6 +482,12 @@ const cloudDataGenerator = {
       return []
     }
 
+    // Early return if array is empty (cloud was destroyed)
+    if (pixelProps.length === 0) {
+      console.log('Worker: Received empty pixelProps array, returning empty colors array')
+      return []
+    }
+
     for (let i = 0; i < pixelProps.length; i++) {
       const prop = pixelProps[i]
 

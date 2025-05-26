@@ -1,13 +1,29 @@
 import * as Comlink from 'comlink'
 import * as PIXI from 'pixi.js'
 import { type CloudSettings, Sidebar } from '../components/Sidebar'
-import { CANVAS_CONFIG, CLOUD_CONFIG, DEPTH_CONFIG, generateDepthLayers } from '../constants'
+import {
+  CANVAS_CONFIG,
+  CLOUD_CONFIG,
+  DEPTH_CONFIG,
+  SUN_CONFIG,
+  generateDepthLayers,
+} from '../constants'
 import { CloudFragment } from '../entities/CloudFragment'
 import type { LocationData, SkyGradient, SunPosition } from '../types'
 import { LocationService } from '../utils/locationService'
 import { SkyGradientService } from '../utils/skyGradientService'
 import { SunCalculator } from '../utils/sunCalculator'
 import type { CloudDataWorker } from '../workers/cloudDataWorker'
+
+interface StarData {
+  baseAlpha: number
+  twinkleSpeed: number
+  twinkleOffset: number
+}
+
+interface StarGraphics extends PIXI.Graphics {
+  starData?: StarData
+}
 
 export class CloudscapeRenderer {
   private app: PIXI.Application
@@ -16,6 +32,8 @@ export class CloudscapeRenderer {
   private depthContainers: Map<string, PIXI.Container> = new Map()
   private skyContainer: PIXI.Container
   private skySprite: PIXI.Sprite | null = null
+  private starsContainer: PIXI.Container
+  private stars: StarGraphics[] = []
   private time = 0
 
   private locationService: LocationService
@@ -26,8 +44,12 @@ export class CloudscapeRenderer {
   private currentSkyGradient: SkyGradient | null = null
 
   private lastSunUpdate = 0
-  private nextSpawnTime = 0
-  private readonly SUN_UPDATE_INTERVAL = 60000
+  private readonly SUN_UPDATE_INTERVAL = SUN_CONFIG.UPDATE_INTERVAL
+
+  // New continuous spawning system
+  private cloudSpawnAccumulator = 0
+  private lastSpawnCheck = 0
+  private readonly BASE_SPAWN_RATE = CLOUD_CONFIG.BASE_SPAWN_RATE
 
   private sidebar: Sidebar
   private customTime: Date | null = null
@@ -51,9 +73,11 @@ export class CloudscapeRenderer {
     })
 
     this.skyContainer = new PIXI.Container()
+    this.starsContainer = new PIXI.Container()
     this.cloudContainer = new PIXI.Container()
 
     this.app.stage.addChild(this.skyContainer)
+    this.app.stage.addChild(this.starsContainer)
     this.app.stage.addChild(this.cloudContainer)
 
     this.initializeDepthLayers()
@@ -111,6 +135,7 @@ export class CloudscapeRenderer {
       this.skyContainer.addChild(this.skySprite)
 
       await this.updateSunPosition() // This will generate initial gradient and call updateSkyBackground
+      this.createStars()
       await this.createInitialClouds()
       this.setupEventListeners()
       this.startAnimation()
@@ -131,6 +156,7 @@ export class CloudscapeRenderer {
         this.skySprite.texture = this.app.renderer.generateTexture(graphics)
         graphics.destroy()
       }
+      this.createStars()
       await this.createInitialClouds()
       this.setupEventListeners()
       this.startAnimation()
@@ -208,34 +234,106 @@ export class CloudscapeRenderer {
     graphics.destroy()
   }
 
-  private async createInitialClouds(): Promise<void> {
+  private calculateCloudCountsPerLayer(): Map<string, number> {
     const layerKeys = Object.keys(this.currentDepthLayers)
-    const cloudPromises: Promise<CloudFragment | null>[] = []
+    const cloudCountsByLayer = new Map<string, number>()
 
-    for (const layerKey of layerKeys) {
+    // Sort layers by depth (0 = furthest back, 1 = front-most)
+    const sortedLayers = layerKeys.sort((a, b) => {
+      return this.currentDepthLayers[a].depth - this.currentDepthLayers[b].depth
+    })
+
+    // Front-most layer (highest depth value) gets the full cloud count
+    // Layers further back get progressively fewer clouds
+    for (const layerKey of sortedLayers) {
       const layerConfig = this.currentDepthLayers[layerKey]
-      const depthMultiplier = 0.3 + layerConfig.depth * 0.7
-      const cloudsForThisLayer = Math.floor(this.cloudSettings.cloudCount * depthMultiplier)
+      // Invert depth so front layer (depth=1) gets full count, back layer (depth=0) gets reduced count
+      const depthRatio = 0.3 + layerConfig.depth * 0.7 // Range from 30% to 100%
+      const cloudsForLayer = Math.max(1, Math.floor(this.cloudSettings.cloudCount * depthRatio))
+      cloudCountsByLayer.set(layerKey, cloudsForLayer)
+    }
 
-      for (let i = 0; i < cloudsForThisLayer; i++) {
-        const totalWidth = this.app.screen.width * 3 + CLOUD_CONFIG.RESPAWN_MARGIN * 2
-        const spacing = totalWidth / cloudsForThisLayer
-        const baseX = -CLOUD_CONFIG.RESPAWN_MARGIN - this.app.screen.width + i * spacing
-        const randomOffset = (Math.random() - 0.5) * spacing * 0.6
-        const initialX = baseX + randomOffset
-        // Pass currentSkyGradient for initial color calculation in worker
-        cloudPromises.push(this.spawnCloud(initialX, layerKey, this.currentSkyGradient))
+    return cloudCountsByLayer
+  }
+
+  private async createInitialClouds(): Promise<void> {
+    const cloudPromises: Promise<CloudFragment | null>[] = []
+    const targetCloudCounts = this.calculateCloudCountsPerLayer()
+
+    // Create a more natural distribution across the entire visible area
+    const totalScreenWidth = this.app.screen.width
+    const extendedWidth = totalScreenWidth * 2.5 // Cover more area for natural flow
+    const startX = -CLOUD_CONFIG.RESPAWN_MARGIN - totalScreenWidth * 0.5
+
+    for (const [layerKey, targetCount] of targetCloudCounts) {
+      // Ensure at least some clouds are visible on screen immediately
+      const visibleClouds = Math.max(1, Math.floor(targetCount * 0.6)) // 60% visible
+      const offScreenClouds = targetCount - visibleClouds
+
+      // Create visible clouds first - spread them across the screen
+      for (let i = 0; i < visibleClouds; i++) {
+        const x =
+          (i / Math.max(1, visibleClouds - 1)) * totalScreenWidth * 0.8 + totalScreenWidth * 0.1 // Spread across 80% of screen width
+        cloudPromises.push(this.spawnCloud(x, layerKey, this.currentSkyGradient))
+      }
+
+      // Create off-screen clouds for natural flow
+      if (offScreenClouds > 0) {
+        const targetSpacing = extendedWidth / offScreenClouds
+        let currentX = startX
+
+        for (let i = 0; i < offScreenClouds; i++) {
+          // Add natural variation to spacing (some clusters, some gaps)
+          const spacingVariation = (Math.random() - 0.5) * targetSpacing * 0.8
+          const clusterChance = Math.random()
+
+          if (clusterChance < 0.15) {
+            // 15% chance for tighter clustering
+            currentX += targetSpacing * 0.3 + spacingVariation * 0.5
+          } else if (clusterChance < 0.25) {
+            // 10% chance for wider gaps
+            currentX += targetSpacing * 1.7 + spacingVariation
+          } else {
+            // Normal spacing with variation
+            currentX += targetSpacing + spacingVariation
+          }
+
+          cloudPromises.push(this.spawnCloud(currentX, layerKey, this.currentSkyGradient))
+        }
       }
     }
+
     const newCloudsWithNulls = await Promise.all(cloudPromises)
     const newClouds = newCloudsWithNulls.filter((c) => c !== null) as CloudFragment[]
 
-    // Initial drawing for new clouds is handled within spawnCloud or by the first updateSkyGradient call
-    // If an explicit initial draw is still needed after creation and before first regular update:
+    // Calculate total expected clouds for better logging
+    const totalExpectedClouds = Array.from(targetCloudCounts.values()).reduce(
+      (sum, count) => sum + count,
+      0,
+    )
+    console.log(
+      `Created ${newClouds.length} clouds (expected: ${totalExpectedClouds}) for front-layer cloud count setting: ${this.cloudSettings.cloudCount}`,
+    )
+
+    // Debug cloud distribution by layer
+    const cloudsByLayer = new Map<string, number>()
+    for (const cloud of newClouds) {
+      const currentCount = cloudsByLayer.get(cloud.data.depthLayer) || 0
+      cloudsByLayer.set(cloud.data.depthLayer, currentCount + 1)
+    }
+
+    console.log('Cloud distribution by layer:')
+    for (const [layerKey, actualCount] of cloudsByLayer) {
+      const expectedCount = targetCloudCounts.get(layerKey) || 0
+      const layerDepth = this.currentDepthLayers[layerKey]?.depth || 0
+      console.log(
+        `  ${layerKey} (depth: ${layerDepth.toFixed(2)}): ${actualCount}/${expectedCount} clouds`,
+      )
+    }
+
+    // Initial drawing for new clouds
     const initialDrawPromises = newClouds.map((cloud) => {
       if (this.currentSkyGradient) {
-        // Ensure renderer is available and texture exists before trying to draw
-        // The check for !this.renderTexture in updateSkyGradient should handle initial draw.
         return cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
       }
       return Promise.resolve()
@@ -257,18 +355,8 @@ export class CloudscapeRenderer {
         )
         return null // Cannot proceed without layers
       }
-      const weights = layerKeys.map((key) => 0.3 + (this.currentDepthLayers[key]?.depth || 0) * 0.7)
-      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
-      let random = Math.random() * totalWeight
-      // Ensure selectedLayerKey is definitely assigned a value from layerKeys
-      selectedLayerKey = layerKeys[0] // Default to first layer if loop doesn't find one (should not happen if totalWeight > 0)
-      for (let i = 0; i < layerKeys.length; i++) {
-        if (random <= weights[i]) {
-          selectedLayerKey = layerKeys[i]
-          break
-        }
-        random -= weights[i]
-      }
+      // Use balanced selection instead of weighted toward closer layers
+      selectedLayerKey = layerKeys[Math.floor(Math.random() * layerKeys.length)]
     }
 
     // At this point, selectedLayerKey should be a valid key from currentDepthLayers or the provided targetLayerKey
@@ -310,8 +398,11 @@ export class CloudscapeRenderer {
     if (initialX !== undefined) {
       cloud.data.x = initialX
     } else {
-      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400
-      cloud.data.x = this.app.screen.width + spawnDistance
+      // More natural spawn positioning with variation
+      const baseSpawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + 100
+      const randomVariation = Math.random() * 600 // 0-600px variation
+      const depthVariation = (1 - layerConfig.depth) * 200 // Farther clouds spawn further out
+      cloud.data.x = this.app.screen.width + baseSpawnDistance + randomVariation + depthVariation
     }
 
     cloud.displayObject.alpha = cloud.data.alpha // Set final alpha on the sprite
@@ -320,6 +411,9 @@ export class CloudscapeRenderer {
     const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
     if (depthContainer) {
       depthContainer.addChild(cloud.displayObject)
+    } else {
+      console.error(`No depth container found for layer: ${cloud.data.depthLayer}`)
+      return null
     }
 
     // The first updateSkyGradient (if skyGradient is present and different or texture not ready)
@@ -328,46 +422,89 @@ export class CloudscapeRenderer {
     // this call will trigger the first color calculation and draw.
     if (this.currentSkyGradient) {
       await cloud.updateSkyGradient(this.currentSkyGradient, this.app.renderer as PIXI.Renderer)
+    } else {
+      // Even without sky gradient, ensure the cloud texture is drawn
+      await cloud.updateSkyGradient(null, this.app.renderer as PIXI.Renderer)
     }
 
     return cloud
   }
 
   private async checkAndSpawnClouds(): Promise<void> {
+    const now = Date.now()
+    const deltaTime = this.lastSpawnCheck > 0 ? (now - this.lastSpawnCheck) / 1000 : 0
+    this.lastSpawnCheck = now
+
+    // Skip if deltaTime is too large (e.g., tab was inactive)
+    if (deltaTime > 1.0) return
+
+    // Calculate current cloud counts per layer
+    const cloudCountsByLayer = new Map<string, number>()
+    const targetCountsByLayer = this.calculateCloudCountsPerLayer()
+
+    // Initialize current counts to 0
+    for (const layerKey of targetCountsByLayer.keys()) {
+      cloudCountsByLayer.set(layerKey, 0)
+    }
+
+    // Count existing clouds by layer
     const visibleClouds = this.cloudFragments.filter(
       (cloud) =>
         cloud.data.x > -CLOUD_CONFIG.RESPAWN_MARGIN &&
-        cloud.data.x < this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN,
-    ).length
+        cloud.data.x < this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN * 2,
+    )
 
-    const layerKeys = Object.keys(this.currentDepthLayers)
-    let totalExpectedClouds = 0
-    for (const layerKey of layerKeys) {
-      const layerConfig = this.currentDepthLayers[layerKey]
-      if (layerConfig) {
-        // Check if layerConfig exists
-        const depthMultiplier = 0.3 + layerConfig.depth * 0.7
-        totalExpectedClouds += Math.floor(this.cloudSettings.cloudCount * depthMultiplier)
-      }
+    for (const cloud of visibleClouds) {
+      const currentCount = cloudCountsByLayer.get(cloud.data.depthLayer) || 0
+      cloudCountsByLayer.set(cloud.data.depthLayer, currentCount + 1)
     }
 
-    const minOnScreen = Math.floor(totalExpectedClouds * 0.8)
-    const maxTotal = Math.floor(totalExpectedClouds * 1.2)
+    // Calculate spawn rate based on user settings
+    const baseSpawnRate = this.BASE_SPAWN_RATE * CLOUD_CONFIG.SPAWN_RATE_MULTIPLIER
+    const spawnIntervalFactor =
+      this.cloudSettings.spawnInterval === 0
+        ? 1.2
+        : Math.max(
+            0.1,
+            1.2 - (this.cloudSettings.spawnInterval / CLOUD_CONFIG.SPAWN_INTERVAL_MAX) * 1.1,
+          )
 
-    if (visibleClouds < minOnScreen && this.cloudFragments.length < maxTotal) {
-      const cloudsToSpawn = Math.min(
-        minOnScreen - visibleClouds,
-        maxTotal - this.cloudFragments.length,
+    const adjustedSpawnRate = baseSpawnRate * spawnIntervalFactor
+
+    // Accumulate spawn debt more conservatively
+    this.cloudSpawnAccumulator += adjustedSpawnRate * deltaTime
+
+    // Only spawn one cloud at a time for smooth flow
+    if (this.cloudSpawnAccumulator >= 1.0) {
+      this.cloudSpawnAccumulator -= 1.0
+
+      // Find the layer that needs clouds most
+      let bestLayer: string | null = null
+      let highestDeficit = 0
+
+      for (const [layerKey, targetCount] of targetCountsByLayer) {
+        const currentCount = cloudCountsByLayer.get(layerKey) || 0
+        const deficit = targetCount - currentCount
+
+        if (deficit > 0 && deficit > highestDeficit) {
+          highestDeficit = deficit
+          bestLayer = layerKey
+        }
+      }
+
+      // Calculate total expected clouds for spawn limit
+      const totalExpectedClouds = Array.from(targetCountsByLayer.values()).reduce(
+        (sum, count) => sum + count,
+        0,
       )
-      const spawnPromises: Promise<CloudFragment | null>[] = [] // Can be null
-      for (let i = 0; i < cloudsToSpawn; i++) {
-        spawnPromises.push(this.spawnCloud(undefined, undefined, this.currentSkyGradient))
+
+      // Spawn a cloud in the layer that needs it most
+      if (bestLayer && this.cloudFragments.length < totalExpectedClouds * 2) {
+        await this.spawnCloud(undefined, bestLayer, this.currentSkyGradient)
       }
-      const spawnedCloudsWithNulls = await Promise.all(spawnPromises)
-      // Filter out nulls before doing anything else with them, though spawnCloud itself adds to this.cloudFragments
-      // This step might be redundant if spawnCloud handles adding to this.cloudFragments correctly upon successful creation.
     }
 
+    // Clean up clouds that have moved off screen
     this.cloudFragments = this.cloudFragments.filter((cloud) => {
       if (cloud.data.x < -CLOUD_CONFIG.RESPAWN_MARGIN * 2) {
         const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
@@ -392,6 +529,10 @@ export class CloudscapeRenderer {
       this.skySprite.width = window.innerWidth
       this.skySprite.height = window.innerHeight
     }
+
+    // Recreate stars for new screen size
+    this.destroyStars()
+    this.createStars()
   }
 
   private startAnimation(): void {
@@ -408,19 +549,15 @@ export class CloudscapeRenderer {
       this.lastSunUpdate = now
     }
 
-    // Check and spawn clouds using randomized intervals
-    if (now >= this.nextSpawnTime) {
-      await this.checkAndSpawnClouds()
-      // Set next spawn time with randomized interval
-      const randomInterval =
-        this.cloudSettings.spawnInterval > 0 ? Math.random() * this.cloudSettings.spawnInterval : 0
-      this.nextSpawnTime = now + randomInterval
-    }
+    // Continuous cloud spawning - check every frame for smooth flow
+    await this.checkAndSpawnClouds()
 
     // Update all cloud fragments
     for (const cloud of this.cloudFragments) {
       cloud.update(deltaTime)
     }
+
+    this.updateStars()
   }
 
   private async updateCloudSettings(settings: CloudSettings): Promise<void> {
@@ -430,21 +567,51 @@ export class CloudscapeRenderer {
     this.cloudSettings = settings
 
     if (oldDepthLayers !== settings.depthLayers || oldCloudCount !== settings.cloudCount) {
+      console.log(
+        `Cloud settings changing: oldCount=${oldCloudCount}, newCount=${settings.cloudCount}, currentClouds=${this.cloudFragments.length}`,
+      )
+
+      // Properly clean up existing clouds
       for (const cloud of this.cloudFragments) {
+        const depthContainer = this.depthContainers.get(cloud.data.depthLayer)
+        if (depthContainer) {
+          depthContainer.removeChild(cloud.displayObject)
+        }
         cloud.destroy()
       }
       this.cloudFragments = []
+      console.log(`Cleaned up all clouds, remaining: ${this.cloudFragments.length}`)
 
-      this.initializeDepthLayers()
+      // Reinitialize depth layers if needed
+      if (oldDepthLayers !== settings.depthLayers) {
+        this.initializeDepthLayers()
+      } else {
+        // Even if depth layers didn't change, ensure containers are ready
+        console.log(
+          `Depth containers available: ${Array.from(this.depthContainers.keys()).join(', ')}`,
+        )
+      }
 
-      await this.createInitialClouds() // createInitialClouds is already async
+      // Reset spawn system for new configuration
+      this.cloudSpawnAccumulator = 0
+      this.lastSpawnCheck = 0
+
+      // Create new clouds with proper error handling
+      try {
+        await this.createInitialClouds()
+        console.log(`Cloud settings updated: ${this.cloudFragments.length} clouds created`)
+      } catch (error) {
+        console.error('Failed to create initial clouds after settings change:', error)
+      }
       return
     }
 
     if (oldSpawnInterval !== settings.spawnInterval) {
-      this.nextSpawnTime = Date.now()
+      // Reset accumulator when spawn interval changes for immediate effect
+      this.cloudSpawnAccumulator = 0
     }
 
+    // Update speed for existing clouds
     for (const cloud of this.cloudFragments) {
       cloud.data.speed = settings.speed * cloud.data.speedMultiplier
     }
@@ -459,9 +626,18 @@ export class CloudscapeRenderer {
     }
 
     this.cloudFragments = []
+    this.destroyStars()
     this.skySprite?.destroy()
     this.sidebar.destroy()
     this.app.destroy(true)
+  }
+
+  private destroyStars(): void {
+    for (const star of this.stars) {
+      star.destroy()
+    }
+    this.stars = []
+    this.starsContainer.removeChildren()
   }
 
   private getBaseYForLayer(layerConfig: any): number {
@@ -482,5 +658,74 @@ export class CloudscapeRenderer {
     }
 
     return yMin + Math.random() * (yMax - yMin)
+  }
+
+  private createStars(): void {
+    const numStars = 150 + Math.floor(Math.random() * 100) // 150-250 stars
+
+    for (let i = 0; i < numStars; i++) {
+      const star = new PIXI.Graphics() as StarGraphics
+      const x = Math.random() * this.app.screen.width
+      const y = Math.random() * this.app.screen.height * 0.7 // Only in upper 70% of screen
+      const size = 0.5 + Math.random() * 1.5 // Star size between 0.5 and 2
+      const brightness = 0.3 + Math.random() * 0.7 // Brightness variation
+
+      // Create a simple star shape
+      star.beginFill(0xffffff, brightness)
+      star.drawCircle(0, 0, size)
+      star.endFill()
+
+      star.position.set(x, y)
+      star.alpha = 0 // Start invisible
+
+      // Add subtle twinkling data
+      star.starData = {
+        baseAlpha: brightness,
+        twinkleSpeed: 0.5 + Math.random() * 1.5,
+        twinkleOffset: Math.random() * Math.PI * 2,
+      }
+
+      this.stars.push(star)
+      this.starsContainer.addChild(star)
+    }
+  }
+
+  private updateStars(): void {
+    if (!this.currentSunPosition) return
+
+    const timeOfDay = this.currentSunPosition.timeOfDay
+    let targetAlpha = 0
+
+    // Determine star visibility based on time of day
+    switch (timeOfDay) {
+      case 'deep_night':
+      case 'night_before_dawn':
+      case 'night_after_dusk':
+        targetAlpha = 1.0
+        break
+      case 'dawn':
+      case 'dusk':
+        targetAlpha = 0.3
+        break
+      default:
+        targetAlpha = 0
+        break
+    }
+
+    // Update each star with twinkling effect
+    for (const star of this.stars) {
+      const starData = star.starData
+      if (starData) {
+        // Calculate twinkling
+        const twinkle =
+          Math.sin(this.time * starData.twinkleSpeed + starData.twinkleOffset) * 0.3 + 0.7
+        const finalAlpha = targetAlpha * starData.baseAlpha * twinkle
+
+        // Smooth transition to target alpha
+        const currentAlpha = star.alpha
+        const alphaSpeed = 0.02
+        star.alpha = currentAlpha + (finalAlpha - currentAlpha) * alphaSpeed
+      }
+    }
   }
 }

@@ -15,6 +15,7 @@ export class Sidebar {
   private timeControlWidget: TimeControlWidget
   private onCloudSettingsChange: (settings: CloudSettings) => void
   private cloudSettings: CloudSettings
+  private debounceTimer: number | null = null
 
   constructor(
     onTimeChange: (time: Date) => void,
@@ -63,7 +64,7 @@ export class Sidebar {
       this.cloudSettings.cloudCount,
       (value) => {
         this.cloudSettings.cloudCount = value
-        this.onCloudSettingsChange(this.cloudSettings)
+        this.debouncedCloudSettingsChange()
       },
     )
   }
@@ -77,7 +78,7 @@ export class Sidebar {
       this.cloudSettings.speed,
       (value) => {
         this.cloudSettings.speed = value
-        this.onCloudSettingsChange(this.cloudSettings)
+        this.debouncedCloudSettingsChange()
       },
       0.01,
     )
@@ -92,7 +93,7 @@ export class Sidebar {
       this.cloudSettings.spawnInterval,
       (value) => {
         this.cloudSettings.spawnInterval = value
-        this.onCloudSettingsChange(this.cloudSettings)
+        this.debouncedCloudSettingsChange()
       },
       10,
     )
@@ -107,7 +108,7 @@ export class Sidebar {
       this.cloudSettings.depthLayers,
       (value) => {
         this.cloudSettings.depthLayers = value
-        this.onCloudSettingsChange(this.cloudSettings)
+        this.debouncedCloudSettingsChange()
       },
     )
   }
@@ -156,6 +157,16 @@ export class Sidebar {
     return section
   }
 
+  private debouncedCloudSettingsChange(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+    }
+
+    this.debounceTimer = window.setTimeout(() => {
+      this.onCloudSettingsChange({ ...this.cloudSettings })
+    }, 100)
+  }
+
   public setTime(time: Date): void {
     this.timeControlWidget.setTime(time)
   }
@@ -165,6 +176,9 @@ export class Sidebar {
   }
 
   public destroy(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+    }
     this.timeControlWidget.destroy()
     this.container.remove()
   }
