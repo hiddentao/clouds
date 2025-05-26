@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js'
-import { TimeControlWidget } from '../components/TimeControlWidget'
+import { type CloudSettings, Sidebar } from '../components/Sidebar'
 import { CANVAS_CONFIG, CLOUD_CONFIG } from '../constants'
 import { CloudFragment } from '../entities/CloudFragment'
 import type { LocationData, SkyGradient, SunPosition } from '../types'
@@ -23,11 +23,16 @@ export class CloudscapeRenderer {
   private currentSkyGradient: SkyGradient | null = null
 
   private lastSunUpdate = 0
-  private lastSpawnCheck = 0
+  private nextSpawnTime = 0
   private readonly SUN_UPDATE_INTERVAL = 60000
 
-  private timeControlWidget: TimeControlWidget
+  private sidebar: Sidebar
   private customTime: Date | null = null
+  private cloudSettings: CloudSettings = {
+    cloudCount: CLOUD_CONFIG.MIN_CLOUDS,
+    speed: (CLOUD_CONFIG.SPEED_MIN + CLOUD_CONFIG.SPEED_MAX) / 2,
+    spawnInterval: CLOUD_CONFIG.SPAWN_INTERVAL_MIN,
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.app = new PIXI.Application({
@@ -49,11 +54,17 @@ export class CloudscapeRenderer {
     this.sunCalculator = SunCalculator.getInstance()
     this.skyGradientService = SkyGradientService.getInstance()
 
-    // Create time control widget
-    this.timeControlWidget = new TimeControlWidget((time: Date) => {
-      this.customTime = time
-      this.updateSunPosition()
-    })
+    // Create sidebar with time control and cloud settings
+    this.sidebar = new Sidebar(
+      (time: Date) => {
+        this.customTime = time
+        this.updateSunPosition()
+      },
+      (settings: CloudSettings) => {
+        this.updateCloudSettings(settings)
+      },
+      this.cloudSettings,
+    )
 
     this.initialize()
   }
@@ -67,8 +78,8 @@ export class CloudscapeRenderer {
       this.setupEventListeners()
       this.startAnimation()
 
-      // Add time control widget to DOM
-      document.body.appendChild(this.timeControlWidget.getElement())
+      // Add sidebar to DOM
+      document.body.appendChild(this.sidebar.getElement())
     } catch (error) {
       console.error('Failed to initialize cloudscape:', error)
       // Fallback initialization without location
@@ -76,8 +87,8 @@ export class CloudscapeRenderer {
       this.setupEventListeners()
       this.startAnimation()
 
-      // Add time control widget to DOM even on error
-      document.body.appendChild(this.timeControlWidget.getElement())
+      // Add sidebar to DOM even on error
+      document.body.appendChild(this.sidebar.getElement())
     }
   }
 
@@ -159,7 +170,7 @@ export class CloudscapeRenderer {
 
   private createClouds(): void {
     // Create initial clouds spread across the screen
-    for (let i = 0; i < CLOUD_CONFIG.COUNT; i++) {
+    for (let i = 0; i < this.cloudSettings.cloudCount; i++) {
       this.spawnCloud(i)
     }
   }
@@ -167,15 +178,19 @@ export class CloudscapeRenderer {
   private spawnCloud(index?: number): CloudFragment {
     const cloud = new CloudFragment(this.app.screen.width, this.app.screen.height)
 
+    // Set cloud speed from settings
+    cloud.data.speed = this.cloudSettings.speed
+
     if (index !== undefined) {
-      // Initial positioning - spread across screen with more randomization
-      const spacing = (this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN * 3) / CLOUD_CONFIG.COUNT
-      const baseX = -CLOUD_CONFIG.RESPAWN_MARGIN + index * spacing
-      const randomOffset = (Math.random() - 0.5) * spacing * 0.8 // Increased randomization
+      // Initial positioning - spread across much wider area to prevent gaps
+      const totalWidth = this.app.screen.width * 3 + CLOUD_CONFIG.RESPAWN_MARGIN * 2
+      const spacing = totalWidth / this.cloudSettings.cloudCount
+      const baseX = -CLOUD_CONFIG.RESPAWN_MARGIN - this.app.screen.width + index * spacing
+      const randomOffset = (Math.random() - 0.5) * spacing * 0.6
       cloud.data.x = baseX + randomOffset
     } else {
       // New spawn - start from right side with varied distance
-      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400 // Increased variation
+      const spawnDistance = CLOUD_CONFIG.RESPAWN_MARGIN + Math.random() * 400
       cloud.data.x = this.app.screen.width + spawnDistance
     }
 
@@ -213,14 +228,15 @@ export class CloudscapeRenderer {
         cloud.data.x < this.app.screen.width + CLOUD_CONFIG.RESPAWN_MARGIN,
     ).length
 
+    // Use dynamic cloud count from settings
+    const minOnScreen = Math.floor(this.cloudSettings.cloudCount * 0.8) // 80% of target count
+    const maxTotal = Math.floor(this.cloudSettings.cloudCount * 1.2) // 120% of target count
+
     // Spawn new clouds if below minimum
-    if (
-      visibleClouds < CLOUD_CONFIG.MIN_ON_SCREEN &&
-      this.cloudFragments.length < CLOUD_CONFIG.MAX_TOTAL
-    ) {
+    if (visibleClouds < minOnScreen && this.cloudFragments.length < maxTotal) {
       const cloudsToSpawn = Math.min(
-        CLOUD_CONFIG.MIN_ON_SCREEN - visibleClouds,
-        CLOUD_CONFIG.MAX_TOTAL - this.cloudFragments.length,
+        minOnScreen - visibleClouds,
+        maxTotal - this.cloudFragments.length,
       )
 
       for (let i = 0; i < cloudsToSpawn; i++) {
@@ -305,15 +321,55 @@ export class CloudscapeRenderer {
       this.lastSunUpdate = now
     }
 
-    // Check and spawn clouds periodically
-    if (now - this.lastSpawnCheck > CLOUD_CONFIG.SPAWN_INTERVAL) {
+    // Check and spawn clouds using randomized intervals
+    if (now >= this.nextSpawnTime) {
       this.checkAndSpawnClouds()
-      this.lastSpawnCheck = now
+      // Set next spawn time with randomized interval
+      const randomInterval = this.cloudSettings.spawnInterval > 0 
+        ? Math.random() * this.cloudSettings.spawnInterval 
+        : 0
+      this.nextSpawnTime = now + randomInterval
     }
 
     // Update all cloud fragments
     for (const cloud of this.cloudFragments) {
       cloud.update(deltaTime)
+    }
+  }
+
+  private updateCloudSettings(settings: CloudSettings): void {
+    const oldSpawnInterval = this.cloudSettings.spawnInterval
+    this.cloudSettings = settings
+
+    // Reset spawn timing if spawn interval changed
+    if (oldSpawnInterval !== settings.spawnInterval) {
+      this.nextSpawnTime = Date.now()
+    }
+
+    // Adjust cloud count
+    const currentCount = this.cloudFragments.length
+    const targetCount = settings.cloudCount
+
+    if (currentCount < targetCount) {
+      // Add more clouds
+      for (let i = currentCount; i < targetCount; i++) {
+        this.spawnCloud()
+      }
+    } else if (currentCount > targetCount) {
+      // Remove excess clouds
+      const cloudsToRemove = currentCount - targetCount
+      for (let i = 0; i < cloudsToRemove; i++) {
+        const cloud = this.cloudFragments.pop()
+        if (cloud) {
+          this.cloudContainer.removeChild(cloud.sprite)
+          cloud.destroy()
+        }
+      }
+    }
+
+    // Update speed for existing clouds
+    for (const cloud of this.cloudFragments) {
+      cloud.data.speed = settings.speed
     }
   }
 
@@ -327,7 +383,7 @@ export class CloudscapeRenderer {
 
     this.cloudFragments = []
     this.skySprite?.destroy()
-    this.timeControlWidget.destroy()
+    this.sidebar.destroy()
     this.app.destroy(true)
   }
 }
