@@ -1,5 +1,4 @@
-import { getPosition, getSunTimes } from 'suncalc3'
-import type { LocationData, SunPosition, TimeOfDay, TimePeriodInfo } from '../types'
+import type { SunPosition, TimeOfDay, TimePeriodInfo } from '../types'
 
 export class SunCalculator {
   private static instance: SunCalculator
@@ -13,71 +12,60 @@ export class SunCalculator {
     return SunCalculator.instance
   }
 
-  calculateSunPosition(location: LocationData, date: Date = new Date()): SunPosition {
-    const sunPos = getPosition(date, location.latitude, location.longitude)
-    const sunTimes = getSunTimes(date, location.latitude, location.longitude)
-    const nowTs = date.getTime()
-
-    const currentTimePeriod = this.determineCurrentTimePeriod(nowTs, sunTimes, date)
+  calculateSunPosition(date: Date = new Date()): SunPosition {
+    const now = date.getTime()
+    const currentTimePeriod = this.determineCurrentTimePeriod(now, date)
     const generalTimeOfDay = this.mapPeriodToGeneralTimeOfDay(currentTimePeriod.name)
 
+    // Calculate basic sun properties based on time of day
+    const { altitude, azimuth } = this.calculateSunAltitudeAzimuth(currentTimePeriod.name)
+
     return {
-      altitude: sunPos.altitude,
-      azimuth: sunPos.azimuth,
-      isDay: nowTs >= sunTimes.sunriseStart.ts && nowTs <= sunTimes.sunsetEnd.ts,
-      isDawn: nowTs >= sunTimes.civilDawn.ts && nowTs < sunTimes.sunriseStart.ts,
-      isDusk: nowTs > sunTimes.sunsetEnd.ts && nowTs <= sunTimes.civilDusk.ts,
-      isNight: !(nowTs >= sunTimes.civilDawn.ts && nowTs <= sunTimes.civilDusk.ts), // Night is outside civil dawn/dusk
+      altitude,
+      azimuth,
+      isDay: this.isDayTime(currentTimePeriod.name),
+      isDawn: currentTimePeriod.name === 'dawn',
+      isDusk: currentTimePeriod.name === 'dusk',
+      isNight: this.isNightTime(currentTimePeriod.name),
       timeOfDay: generalTimeOfDay,
       currentTimePeriod,
     }
   }
 
-  private determineCurrentTimePeriod(
-    nowTs: number,
-    sunTimes: ReturnType<typeof getSunTimes>,
-    currentDate: Date,
-  ): TimePeriodInfo {
-    // Create a day-spanning list of solar events with names and times
-    // Order matters for finding the current period.
-    // Times are already in epoch ms from suncalc3 SunTimeDef.ts
+  private determineCurrentTimePeriod(nowTs: number, currentDate: Date): TimePeriodInfo {
+    // Hardcoded times: sunrise at 6:30 AM, sunset at 7:30 PM
+    const startOfDay = this.getStartOfDay(currentDate)
+    const endOfDay = this.getEndOfDay(currentDate)
 
+    // Define fixed solar events for the day
+    const sunriseTime = new Date(startOfDay.getTime() + 6.5 * 60 * 60 * 1000) // 6:30 AM
+    const sunsetTime = new Date(startOfDay.getTime() + 19.5 * 60 * 60 * 1000) // 7:30 PM
+    const solarNoonTime = new Date(startOfDay.getTime() + 13 * 60 * 60 * 1000) // 1:00 PM
+
+    // Create time periods with fixed durations
     const todaySolarEvents: { name: TimeOfDay; time: number }[] = [
-      { name: 'deep_night' as TimeOfDay, time: this.getStartOfDay(currentDate).getTime() }, // Start of day for deep_night boundary
-      {
-        name: 'night_before_dawn' as TimeOfDay,
-        time: sunTimes.astronomicalDawn?.valid
-          ? sunTimes.astronomicalDawn.ts
-          : this.getStartOfDay(currentDate).getTime(),
-      }, // Approx
-      { name: 'dawn' as TimeOfDay, time: sunTimes.civilDawn.ts },
-      { name: 'sunrise' as TimeOfDay, time: sunTimes.sunriseStart.ts },
-      { name: 'morning' as TimeOfDay, time: sunTimes.sunriseEnd.ts },
+      { name: 'deep_night' as TimeOfDay, time: startOfDay.getTime() },
+      { name: 'night_before_dawn' as TimeOfDay, time: sunriseTime.getTime() - 2 * 60 * 60 * 1000 }, // 4:30 AM
+      { name: 'dawn' as TimeOfDay, time: sunriseTime.getTime() - 60 * 60 * 1000 }, // 5:30 AM
+      { name: 'sunrise' as TimeOfDay, time: sunriseTime.getTime() }, // 6:30 AM
+      { name: 'morning' as TimeOfDay, time: sunriseTime.getTime() + 60 * 60 * 1000 }, // 7:30 AM
       {
         name: 'solar_noon_transition' as TimeOfDay,
-        time: sunTimes.solarNoon.ts - 2 * 60 * 60 * 1000,
-      },
-      { name: 'solar_noon' as TimeOfDay, time: sunTimes.solarNoon.ts },
-      { name: 'afternoon' as TimeOfDay, time: sunTimes.solarNoon.ts + 5 * 60 * 1000 }, // Solar noon lasts conceptually short, start afternoon soon after
-      {
-        name: 'evening_transition' as TimeOfDay,
-        time: sunTimes.sunsetStart.ts - 2 * 60 * 60 * 1000,
-      },
-      { name: 'sunset' as TimeOfDay, time: sunTimes.sunsetStart.ts },
-      { name: 'dusk' as TimeOfDay, time: sunTimes.sunsetEnd.ts },
-      { name: 'night_after_dusk' as TimeOfDay, time: sunTimes.civilDusk.ts },
-      {
-        name: 'deep_night' as TimeOfDay,
-        time: sunTimes.astronomicalDusk?.valid
-          ? sunTimes.astronomicalDusk.ts
-          : this.getEndOfDay(currentDate).getTime(),
-      }, // Approx
+        time: solarNoonTime.getTime() - 2 * 60 * 60 * 1000,
+      }, // 11:00 AM
+      { name: 'solar_noon' as TimeOfDay, time: solarNoonTime.getTime() }, // 1:00 PM
+      { name: 'afternoon' as TimeOfDay, time: solarNoonTime.getTime() + 5 * 60 * 1000 }, // 1:05 PM
+      { name: 'evening_transition' as TimeOfDay, time: sunsetTime.getTime() - 2 * 60 * 60 * 1000 }, // 5:30 PM
+      { name: 'sunset' as TimeOfDay, time: sunsetTime.getTime() }, // 7:30 PM
+      { name: 'dusk' as TimeOfDay, time: sunsetTime.getTime() + 60 * 60 * 1000 }, // 8:30 PM
+      { name: 'night_after_dusk' as TimeOfDay, time: sunsetTime.getTime() + 2 * 60 * 60 * 1000 }, // 9:30 PM
+      { name: 'deep_night' as TimeOfDay, time: sunsetTime.getTime() + 3 * 60 * 60 * 1000 }, // 10:30 PM
     ].sort((a, b) => a.time - b.time)
 
     // Add end of day event to cap the last period
     const endOfDayEvent = {
       name: 'deep_night' as TimeOfDay,
-      time: this.getEndOfDay(currentDate).getTime(),
+      time: endOfDay.getTime(),
     }
 
     for (let i = 0; i < todaySolarEvents.length; i++) {
@@ -87,14 +75,67 @@ export class SunCalculator {
         return { name: currentEvent.name, startTime: currentEvent.time, endTime: nextEvent.time }
       }
     }
-    // Default to deep_night if no other period matches (should not happen with sorted events and cap)
+
+    // Default to deep_night if no other period matches
     return { name: 'deep_night' as TimeOfDay, startTime: nowTs, endTime: nowTs + 3600000 }
   }
 
+  private calculateSunAltitudeAzimuth(timeOfDay: TimeOfDay): { altitude: number; azimuth: number } {
+    // Simple approximation based on time of day
+    switch (timeOfDay) {
+      case 'deep_night':
+      case 'night_before_dawn':
+      case 'night_after_dusk':
+        return { altitude: -0.5, azimuth: 0 } // Below horizon
+
+      case 'dawn':
+        return { altitude: -0.1, azimuth: Math.PI / 2 } // Just below horizon, east
+
+      case 'sunrise':
+        return { altitude: 0.1, azimuth: Math.PI / 2 } // Just above horizon, east
+
+      case 'morning':
+        return { altitude: 0.5, azimuth: Math.PI / 3 } // Rising, southeast
+
+      case 'solar_noon_transition':
+      case 'solar_noon':
+        return { altitude: Math.PI / 3, azimuth: Math.PI } // High, south
+
+      case 'afternoon':
+        return { altitude: 0.5, azimuth: (4 * Math.PI) / 3 } // Descending, southwest
+
+      case 'evening_transition':
+        return { altitude: 0.3, azimuth: (3 * Math.PI) / 2 } // Lower, west
+
+      case 'sunset':
+        return { altitude: 0.1, azimuth: (3 * Math.PI) / 2 } // Just above horizon, west
+
+      case 'dusk':
+        return { altitude: -0.1, azimuth: (3 * Math.PI) / 2 } // Just below horizon, west
+
+      default:
+        return { altitude: 0, azimuth: 0 }
+    }
+  }
+
+  private isDayTime(timeOfDay: TimeOfDay): boolean {
+    return [
+      'sunrise',
+      'morning',
+      'solar_noon_transition',
+      'solar_noon',
+      'afternoon',
+      'evening_transition',
+      'sunset',
+    ].includes(timeOfDay)
+  }
+
+  private isNightTime(timeOfDay: TimeOfDay): boolean {
+    return ['deep_night', 'night_before_dawn', 'night_after_dusk'].includes(timeOfDay)
+  }
+
   private mapPeriodToGeneralTimeOfDay(periodName: TimeOfDay): TimeOfDay {
-    // This can be a simple mapping if the TimeOfDay enum is already granular enough
-    // or a broader categorization if needed elsewhere.
-    // For now, assume the periodName itself is the general TimeOfDay we want to expose.
+    // This method can remain the same as it just maps specific periods to general categories
     return periodName
   }
 
@@ -113,7 +154,6 @@ export class SunCalculator {
   getSunIntensity(sunPosition: SunPosition): number {
     if (sunPosition.isNight) return 0
     // Use altitude for intensity. Altitude is in radians, sin(alt) gives a good curve.
-    // Max altitude is PI/2 (90 deg). Negative altitude means below horizon.
     return Math.max(0, Math.sin(sunPosition.altitude))
   }
 }

@@ -9,8 +9,7 @@ import {
   generateDepthLayers,
 } from '../constants'
 import { CloudFragment } from '../entities/CloudFragment'
-import type { LocationData, SkyGradient, SunPosition } from '../types'
-import { LocationService } from '../utils/locationService'
+import type { SkyGradient, SunPosition } from '../types'
 import { SkyGradientService } from '../utils/skyGradientService'
 import { SunCalculator } from '../utils/sunCalculator'
 import type { CloudDataWorker } from '../workers/cloudDataWorker'
@@ -38,10 +37,8 @@ export class CloudscapeRenderer {
   private stars: StarGraphics[] = []
   private time = 0
 
-  private locationService: LocationService
   private sunCalculator: SunCalculator
   private skyGradientService: SkyGradientService
-  private currentLocation: LocationData | null = null
   private currentSunPosition: SunPosition | null = null
   private currentSkyGradient: SkyGradient | null = null
 
@@ -59,7 +56,7 @@ export class CloudscapeRenderer {
   private cloudDataWorker: Comlink.Remote<CloudDataWorker>
   private isUpdatingSettings = false // Flag to prevent race conditions during settings updates
   private lastCloudSpawnCheck = 0 // Throttle cloud spawning checks
-  private readonly CLOUD_SPAWN_CHECK_INTERVAL = 100 // Check every 100ms instead of every frame
+  private readonly CLOUD_SPAWN_CHECK_INTERVAL = 100
 
   constructor(canvas: HTMLCanvasElement) {
     this.app = new PIXI.Application({
@@ -83,7 +80,6 @@ export class CloudscapeRenderer {
 
     this.initializeDepthLayers()
 
-    this.locationService = LocationService.getInstance()
     this.sunCalculator = SunCalculator.getInstance()
     this.skyGradientService = SkyGradientService.getInstance()
 
@@ -128,7 +124,6 @@ export class CloudscapeRenderer {
 
   private async initialize(): Promise<void> {
     try {
-      this.currentLocation = await this.locationService.getCurrentLocation()
       // Create the sky sprite first, then update its content
       this.skySprite = new PIXI.Sprite() // Create an empty sprite initially
       this.skySprite.width = this.app.screen.width
@@ -166,12 +161,8 @@ export class CloudscapeRenderer {
   }
 
   private async updateSunPosition(): Promise<void> {
-    if (!this.currentLocation) return
     const timeToUse = this.customTime || new Date()
-    this.currentSunPosition = this.sunCalculator.calculateSunPosition(
-      this.currentLocation,
-      timeToUse,
-    )
+    this.currentSunPosition = this.sunCalculator.calculateSunPosition(timeToUse)
     const newSkyGradient = await this.skyGradientService.generateSkyGradient(
       this.currentSunPosition,
       timeToUse.getTime(),

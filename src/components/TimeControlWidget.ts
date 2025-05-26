@@ -5,6 +5,9 @@ export class TimeControlWidget {
   private timeDisplay!: HTMLElement
   private dialContainer!: HTMLElement
   private dialBackground!: HTMLElement
+  private dialControlsContainer!: HTMLElement
+  private leftButton!: HTMLButtonElement
+  private rightButton!: HTMLButtonElement
   private currentTime: Date
   private onTimeChange: (time: Date) => void
   private debounceTimer: number | null = null
@@ -29,6 +32,17 @@ export class TimeControlWidget {
     this.timeDisplay.className = 'time-display'
     widget.appendChild(this.timeDisplay)
 
+    // Dial controls container (holds buttons and dial)
+    this.dialControlsContainer = document.createElement('div')
+    this.dialControlsContainer.className = 'dial-controls-container'
+
+    // Left button (counter-clockwise)
+    this.leftButton = document.createElement('button')
+    this.leftButton.className = 'time-adjust-button left'
+    this.leftButton.innerHTML = '‹'
+    this.leftButton.title = 'Decrease time by 1 minute'
+    this.dialControlsContainer.appendChild(this.leftButton)
+
     // Dial container
     this.dialContainer = document.createElement('div')
     this.dialContainer.className = 'dial-container'
@@ -49,7 +63,16 @@ export class TimeControlWidget {
       this.dialBackground.appendChild(marker)
     }
 
-    widget.appendChild(this.dialContainer)
+    this.dialControlsContainer.appendChild(this.dialContainer)
+
+    // Right button (clockwise)
+    this.rightButton = document.createElement('button')
+    this.rightButton.className = 'time-adjust-button right'
+    this.rightButton.innerHTML = '›'
+    this.rightButton.title = 'Increase time by 1 minute'
+    this.dialControlsContainer.appendChild(this.rightButton)
+
+    widget.appendChild(this.dialControlsContainer)
 
     return widget
   }
@@ -116,8 +139,27 @@ export class TimeControlWidget {
       document.removeEventListener('touchend', handleEnd)
     }
 
+    // Dial event listeners
     this.dialContainer.addEventListener('mousedown', handleStart)
     this.dialContainer.addEventListener('touchstart', handleStart, { passive: false })
+
+    // Button event listeners
+    this.leftButton.addEventListener('click', () => {
+      this.adjustTimeByMinutes(-1)
+    })
+
+    this.rightButton.addEventListener('click', () => {
+      this.adjustTimeByMinutes(1)
+    })
+  }
+
+  private adjustTimeByMinutes(minutes: number): void {
+    const newTime = new Date(this.currentTime)
+    newTime.setMinutes(newTime.getMinutes() + minutes)
+    this.currentTime = newTime
+    this.updateTimeDisplay()
+    this.updateDialPosition()
+    this.debouncedTimeChange()
   }
 
   private getAngleFromTime(): number {

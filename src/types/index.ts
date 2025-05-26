@@ -1,11 +1,3 @@
-export interface LocationData {
-  latitude: number
-  longitude: number
-  timezone: string
-  city: string
-  country: string
-}
-
 export interface TimePeriodInfo {
   name: TimeOfDay
   startTime: number // Store as epoch milliseconds for easier transfer to worker
