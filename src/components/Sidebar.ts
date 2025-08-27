@@ -16,6 +16,7 @@ export class Sidebar {
   private onCloudSettingsChange: (settings: CloudSettings) => void
   private cloudSettings: CloudSettings
   private debounceTimer: number | null = null
+  private autoShowTimer: number | null = null
   private isCollapsed = true
 
   constructor(
@@ -31,6 +32,7 @@ export class Sidebar {
     this.setupCollapseButton()
 
     this.container.classList.add('collapsed')
+    this.setupAutoShow()
   }
 
   private createSidebar(): HTMLElement {
@@ -56,6 +58,14 @@ export class Sidebar {
     })
 
     document.body.appendChild(this.collapseButton)
+  }
+
+  private setupAutoShow(): void {
+    this.autoShowTimer = window.setTimeout(() => {
+      if (this.isCollapsed) {
+        this.toggleCollapse()
+      }
+    }, 5000)
   }
 
   private toggleCollapse(): void {
@@ -200,6 +210,9 @@ export class Sidebar {
   public destroy(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
+    }
+    if (this.autoShowTimer) {
+      clearTimeout(this.autoShowTimer)
     }
     this.timeControlWidget.destroy()
     this.container.remove()
